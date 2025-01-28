@@ -3,7 +3,7 @@ const config = {
   // like '/berry-material-react/react/default'
   basename: '/',
   defaultPath: '/panel/dashboard',
-  fontFamily: `'Roboto', sans-serif, Helvetica, Arial, sans-serif`,
+  fontFamily: `'Roboto', Helvetica, sans-serif`,
   borderRadius: 12,
   siteInfo: {
     chat_link: '',
@@ -12,17 +12,23 @@ const config = {
     footer_html: '',
     github_client_id: '',
     github_oauth: false,
+    oidc_auth: false,
     logo: '',
     quota_per_unit: 500000,
     server_address: '',
     start_time: 0,
-    system_name: 'One API',
+    system_name: 'One Hub',
+    language: 'zh_CN',
     top_up_link: '',
     turnstile_check: false,
     turnstile_site_key: '',
     version: '',
     wechat_login: false,
-    wechat_qrcode: ''
+    wechat_qrcode: '',
+    lark_login: false,
+    lark_client_id: '',
+    telegram_bot: '',
+    isLoading: true // 添加加载状态
   }
 };
 

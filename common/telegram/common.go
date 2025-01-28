@@ -1,11 +1,15 @@
 package telegram
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"one-api/common"
+	"net"
+	"net/http"
+	"net/url"
+	"one-api/common/config"
+	"one-api/common/logger"
 	"one-api/model"
-	"os"
 	"strings"
 	"time"
 
@@ -14,6 +18,8 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
+	"github.com/spf13/viper"
+	"golang.org/x/net/proxy"
 )
 
 var TGupdater *ext.Updater
@@ -23,20 +29,25 @@ var TGWebHookSecret = ""
 var TGEnabled = false
 
 func InitTelegramBot() {
-	if TGEnabled {
-		common.SysLog("Telegram bot has been started")
+	if !config.IsMasterNode {
 		return
 	}
 
-	if os.Getenv("TG_BOT_API_KEY") == "" {
-		common.SysLog("Telegram bot is not enabled")
+	if TGEnabled {
+		logger.SysLog("Telegram bot has been started")
+		return
+	}
+
+	botKey := viper.GetString("tg.bot_api_key")
+	if botKey == "" {
+		logger.SysLog("Telegram bot is not enabled")
 		return
 	}
 
 	var err error
-	TGBot, err = gotgbot.NewBot(os.Getenv("TG_BOT_API_KEY"), nil)
+	TGBot, err = gotgbot.NewBot(botKey, getBotOpts())
 	if err != nil {
-		common.SysLog("failed to create new telegram bot: " + err.Error())
+		logger.SysError("failed to create new telegram bot: " + err.Error())
 		return
 	}
 
@@ -47,15 +58,16 @@ func InitTelegramBot() {
 }
 
 func StartTelegramBot() {
-	if os.Getenv("TG_WEBHOOK_SECRET") != "" {
-		if common.ServerAddress == "" {
-			common.SysLog("Telegram bot is not enabled: Server address is not set")
+	botWebhook := viper.GetString("tg.webhook_secret")
+	if botWebhook != "" {
+		if config.ServerAddress == "" {
+			logger.SysLog("Telegram bot is not enabled: Server address is not set")
 			StopTelegramBot()
 			return
 		}
-		TGWebHookSecret = os.Getenv("TG_WEBHOOK_SECRET")
-		serverAddress := strings.TrimSuffix(common.ServerAddress, "/")
-		urlPath := fmt.Sprintf("/api/telegram/%s", os.Getenv("TG_BOT_API_KEY"))
+		TGWebHookSecret = botWebhook
+		serverAddress := strings.TrimSuffix(config.ServerAddress, "/")
+		urlPath := fmt.Sprintf("/api/telegram/%s", viper.GetString("tg.bot_api_key"))
 
 		webHookOpts := &ext.AddWebhookOpts{
 			SecretToken: TGWebHookSecret,
@@ -63,7 +75,7 @@ func StartTelegramBot() {
 
 		err := TGupdater.AddWebhook(TGBot, urlPath, webHookOpts)
 		if err != nil {
-			common.SysLog("Telegram bot failed to add webhook:" + err.Error())
+			logger.SysError("Telegram bot failed to add webhook:" + err.Error())
 			return
 		}
 
@@ -73,7 +85,7 @@ func StartTelegramBot() {
 			SecretToken:        TGWebHookSecret,
 		})
 		if err != nil {
-			common.SysLog("Telegram bot failed to set webhook:" + err.Error())
+			logger.SysError("Telegram bot failed to set webhook:" + err.Error())
 			return
 		}
 	} else {
@@ -89,13 +101,13 @@ func StartTelegramBot() {
 		})
 
 		if err != nil {
-			common.SysLog("Telegram bot failed to start polling:" + err.Error())
+			logger.SysLog("Telegram bot failed to start polling:" + err.Error())
 		}
 	}
 
 	// Idle, to keep updates coming in, and avoid bot stopping.
 	go TGupdater.Idle()
-	common.SysLog(fmt.Sprintf("Telegram bot %s has been started...:", TGBot.User.Username))
+	logger.SysLog(fmt.Sprintf("Telegram bot %s has been started...:", TGBot.User.Username))
 	TGEnabled = true
 }
 
@@ -128,7 +140,7 @@ func setDispatcher() *ext.Dispatcher {
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		// If an error is returned by a handler, log it and continue going.
 		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
-			common.SysLog("telegram an error occurred while handling update: " + err.Error())
+			logger.SysError("telegram an error occurred while handling update: " + err.Error())
 			return ext.DispatcherActionNoop
 		},
 		MaxRoutines: ext.DefaultMaxRoutines,
@@ -166,7 +178,7 @@ func getMenu() []gotgbot.BotCommand {
 	customMenu, err := model.GetTelegramMenus()
 
 	if err != nil {
-		common.SysLog("Failed to get custom menu, error: " + err.Error())
+		logger.SysError("Failed to get custom menu, error: " + err.Error())
 	}
 
 	if len(customMenu) > 0 {
@@ -217,4 +229,55 @@ func getBindUser(b *gotgbot.Bot, ctx *ext.Context) *model.User {
 	}
 
 	return user
+}
+
+func getHttpClient() (httpClient *http.Client) {
+	proxyAddr := viper.GetString("tg.http_proxy") // http/socks5
+	if proxyAddr == "" {
+		return
+	}
+
+	proxyURL, err := url.Parse(proxyAddr)
+	if err != nil {
+		logger.SysError("failed to parse TG proxy URL: " + err.Error())
+		return
+	}
+	switch proxyURL.Scheme {
+	case "http", "https":
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(proxyURL),
+			},
+		}
+	case "socks5":
+		dialer, err := proxy.FromURL(proxyURL, proxy.Direct)
+		if err != nil {
+			logger.SysError("failed to create TG SOCKS5 dialer: " + err.Error())
+			return
+		}
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return dialer.(proxy.ContextDialer).DialContext(ctx, network, addr)
+				},
+			},
+		}
+	default:
+		logger.SysError("unknown TG proxy type: " + proxyAddr)
+	}
+
+	return
+}
+
+func getBotOpts() *gotgbot.BotOpts {
+	httpClient := getHttpClient()
+	if httpClient == nil {
+		return nil
+	}
+
+	return &gotgbot.BotOpts{
+		BotClient: &gotgbot.BaseBotClient{
+			Client: *httpClient,
+		},
+	}
 }

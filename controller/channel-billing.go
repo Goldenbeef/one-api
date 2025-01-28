@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"one-api/common"
+	"one-api/common/config"
 	"one-api/model"
 	"one-api/providers"
 	providersBase "one-api/providers/base"
@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// https://github.com/MartialBE/one-api/issues/79
+// https://github.com/MartialBE/one-hub/issues/79
 
 type OpenAISubscriptionResponse struct {
 	Object             string  `json:"object"`
@@ -80,7 +80,7 @@ func UpdateChannelBalance(c *gin.Context) {
 		})
 		return
 	}
-	channel, err := model.GetChannelById(id, true)
+	channel, err := model.GetChannelById(id)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -109,11 +109,11 @@ func updateAllChannelsBalance() error {
 		return err
 	}
 	for _, channel := range channels {
-		if channel.Status != common.ChannelStatusEnabled {
+		if channel.Status != config.ChannelStatusEnabled {
 			continue
 		}
 		// TODO: support Azure
-		if channel.Type != common.ChannelTypeOpenAI && channel.Type != common.ChannelTypeCustom {
+		if channel.Type != config.ChannelTypeOpenAI && channel.Type != config.ChannelTypeCustom {
 			continue
 		}
 		balance, err := updateChannelBalance(channel)
@@ -122,10 +122,10 @@ func updateAllChannelsBalance() error {
 		} else {
 			// err is nil & balance <= 0 means quota is used up
 			if balance <= 0 {
-				disableChannel(channel.Id, channel.Name, "余额不足")
+				DisableChannel(channel.Id, channel.Name, "余额不足", true)
 			}
 		}
-		time.Sleep(common.RequestInterval)
+		time.Sleep(config.RequestInterval)
 	}
 	return nil
 }
@@ -146,11 +146,15 @@ func UpdateAllChannelsBalance(c *gin.Context) {
 	})
 }
 
-func AutomaticallyUpdateChannels(frequency int) {
-	for {
-		time.Sleep(time.Duration(frequency) * time.Minute)
-		common.SysLog("updating all channels")
-		_ = updateAllChannelsBalance()
-		common.SysLog("channels update done")
-	}
-}
+// func AutomaticallyUpdateChannels(frequency int) {
+// 	if frequency <= 0 {
+// 		return
+// 	}
+
+// 	for {
+// 		time.Sleep(time.Duration(frequency) * time.Minute)
+// 		common.SysLog("updating all channels")
+// 		_ = updateAllChannelsBalance()
+// 		common.SysLog("channels update done")
+// 	}
+// }

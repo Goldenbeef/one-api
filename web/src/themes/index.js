@@ -7,6 +7,7 @@ import colors from 'assets/scss/_themes-vars.module.scss';
 import componentStyleOverrides from './compStyleOverride';
 import themePalette from './palette';
 import themeTypography from './typography';
+import { varAlpha } from './utils';
 
 /**
  * Represent theme style and structure as per Material-UI
@@ -15,19 +16,10 @@ import themeTypography from './typography';
 
 export const theme = (customization) => {
   const color = colors;
-
+  const options = customization.theme === 'light' ? GetLightOption() : GetDarkOption();
   const themeOption = {
     colors: color,
-    heading: color.grey900,
-    paper: color.paper,
-    backgroundDefault: color.paper,
-    background: color.primaryLight,
-    darkTextPrimary: color.grey700,
-    darkTextSecondary: color.grey500,
-    textDark: color.grey900,
-    menuSelected: color.secondaryDark,
-    menuSelectedBack: color.secondaryLight,
-    divider: color.grey200,
+    ...options,
     customization
   };
 
@@ -53,3 +45,51 @@ export const theme = (customization) => {
 };
 
 export default theme;
+
+function GetDarkOption() {
+  const color = colors;
+  return {
+    mode: 'dark',
+    heading: color.darkTextTitle,
+    paper: color.darkLevel2,
+    backgroundDefault: color.darkPaper,
+    background: color.darkBackground,
+    darkTextPrimary: color.darkTextDark,
+    darkTextSecondary: color.darkPrimaryLight,
+    textDark: color.darkTextTitle,
+    menuSelected: color.primary200,
+    menuSelectedBack: varAlpha(color.primaryMain, 0.16),
+    divider: color.darkDivider,
+    borderColor: color.darkBorderColor,
+    menuButton: color.darkLevel1,
+    menuButtonColor: color.primaryMain,
+    menuChip: color.darkLevel1,
+    headBackgroundColor: color.darkTableHeader,
+    headBackgroundColorHover: varAlpha(color.darkTableHeader, 0.4),
+    tableBorderBottom: color.darkDivider
+  };
+}
+
+function GetLightOption() {
+  const color = colors;
+  return {
+    mode: 'light',
+    heading: color.grey900,
+    paper: color.paper,
+    backgroundDefault: color.paper,
+    background: color.primaryLight,
+    darkTextPrimary: color.grey700,
+    darkTextSecondary: color.grey500,
+    textDark: color.grey900,
+    menuSelected: color.primaryMain,
+    menuSelectedBack: varAlpha(color.primary200, 0.08),
+    divider: color.grey200,
+    borderColor: color.grey300,
+    menuButton: varAlpha(color.primary200, 0.2),
+    menuButtonColor: color.primaryMain,
+    menuChip: color.primaryLight,
+    headBackgroundColor: color.tableBackground,
+    headBackgroundColorHover: varAlpha(color.darkTableHeader, 0.08),
+    tableBorderBottom: color.tableBorderBottom
+  };
+}

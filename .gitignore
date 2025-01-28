@@ -10,3 +10,9 @@ data
 tmp/
 /test/
 .env
+common/balancer/
+config.yaml
+dist
+test.yaml
+one-api
+_output

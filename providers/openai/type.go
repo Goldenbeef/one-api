@@ -12,14 +12,6 @@ type OpenAIProviderChatStreamResponse struct {
 	types.OpenAIErrorResponse
 }
 
-func (c *OpenAIProviderChatStreamResponse) getResponseText() (responseText string) {
-	for _, choice := range c.Choices {
-		responseText += choice.Delta.Content
-	}
-
-	return
-}
-
 type OpenAIProviderCompletionResponse struct {
 	types.CompletionResponse
 	types.OpenAIErrorResponse
@@ -72,4 +64,16 @@ type OpenAIUsageResponse struct {
 	Object string `json:"object"`
 	//DailyCosts []OpenAIUsageDailyCost `json:"daily_costs"`
 	TotalUsage float64 `json:"total_usage"` // unit: 0.01 dollar
+}
+
+type ModelListResponse struct {
+	Object string         `json:"object"`
+	Data   []ModelDetails `json:"data"`
+}
+
+type ModelDetails struct {
+	Id      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
 }
