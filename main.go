@@ -3,18 +3,29 @@ package main
 import (
 	"embed"
 	"fmt"
+	"one-api/cli"
 	"one-api/common"
+	"one-api/common/cache"
+	"one-api/common/config"
+	"one-api/common/logger"
+	"one-api/common/notify"
+	"one-api/common/oidc"
+	"one-api/common/redis"
+	"one-api/common/requester"
+	"one-api/common/storage"
 	"one-api/common/telegram"
 	"one-api/controller"
+	"one-api/cron"
 	"one-api/middleware"
 	"one-api/model"
+	"one-api/relay/task"
 	"one-api/router"
-	"os"
-	"strconv"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 )
 
 //go:embed web/build
@@ -24,88 +35,112 @@ var buildFS embed.FS
 var indexPage []byte
 
 func main() {
-	common.SetupLogger()
-	common.SysLog("One API " + common.Version + " started")
-	if os.Getenv("GIN_MODE") != "debug" {
-		gin.SetMode(gin.ReleaseMode)
+	cli.InitCli()
+	config.InitConf()
+	if viper.GetString("log_level") == "debug" {
+		config.Debug = true
 	}
-	if common.DebugEnabled {
-		common.SysLog("running in debug mode")
+
+	logger.SetupLogger()
+	logger.SysLog("One Hub " + config.Version + " started")
+
+	// Initialize user token
+	err := common.InitUserToken()
+	if err != nil {
+		logger.FatalLog("failed to initialize user token: " + err.Error())
 	}
+
 	// Initialize SQL Database
-	err := model.InitDB()
-	if err != nil {
-		common.FatalLog("failed to initialize database: " + err.Error())
-	}
-	defer func() {
-		err := model.CloseDB()
-		if err != nil {
-			common.FatalLog("failed to close database: " + err.Error())
-		}
-	}()
-
+	model.SetupDB()
+	defer model.CloseDB()
 	// Initialize Redis
-	err = common.InitRedisClient()
-	if err != nil {
-		common.FatalLog("failed to initialize Redis: " + err.Error())
-	}
-
+	redis.InitRedisClient()
+	cache.InitCacheManager()
 	// Initialize options
 	model.InitOptionMap()
-	if common.RedisEnabled {
-		// for compatibility with old versions
-		common.MemoryCacheEnabled = true
-	}
-	if common.MemoryCacheEnabled {
-		common.SysLog("memory cache enabled")
-		common.SysError(fmt.Sprintf("sync frequency: %d seconds", common.SyncFrequency))
-		model.InitChannelCache()
-	}
-	if common.MemoryCacheEnabled {
-		go model.SyncOptions(common.SyncFrequency)
-		go model.SyncChannelCache(common.SyncFrequency)
-	}
-	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
-		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
-		if err != nil {
-			common.FatalLog("failed to parse CHANNEL_UPDATE_FREQUENCY: " + err.Error())
-		}
-		go controller.AutomaticallyUpdateChannels(frequency)
-	}
-	if os.Getenv("CHANNEL_TEST_FREQUENCY") != "" {
-		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_TEST_FREQUENCY"))
-		if err != nil {
-			common.FatalLog("failed to parse CHANNEL_TEST_FREQUENCY: " + err.Error())
-		}
-		go controller.AutomaticallyTestChannels(frequency)
-	}
-	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
-		common.BatchUpdateEnabled = true
-		common.SysLog("batch update enabled with interval " + strconv.Itoa(common.BatchUpdateInterval) + "s")
-		model.InitBatchUpdater()
-	}
+	// Initialize oidc
+	oidc.InitOIDCConfig()
+	model.NewPricing()
+	model.HandleOldTokenMaxId()
+
+	initMemoryCache()
+	initSync()
+
 	common.InitTokenEncoders()
+	requester.InitHttpClient()
 	// Initialize Telegram bot
 	telegram.InitTelegramBot()
 
-	// Initialize HTTP server
+	controller.InitMidjourneyTask()
+	task.InitTask()
+	notify.InitNotifier()
+	cron.InitCron()
+	storage.InitStorage()
+
+	initHttpServer()
+}
+
+func initMemoryCache() {
+	if viper.GetBool("memory_cache_enabled") {
+		config.MemoryCacheEnabled = true
+	}
+
+	if !config.MemoryCacheEnabled {
+		return
+	}
+
+	syncFrequency := viper.GetInt("sync_frequency")
+	model.TokenCacheSeconds = syncFrequency
+
+	logger.SysLog("memory cache enabled")
+	logger.SysLog(fmt.Sprintf("sync frequency: %d seconds", syncFrequency))
+	go model.SyncOptions(syncFrequency)
+	go SyncChannelCache(syncFrequency)
+}
+
+func initSync() {
+	// go controller.AutomaticallyUpdateChannels(viper.GetInt("channel.update_frequency"))
+	go controller.AutomaticallyTestChannels(viper.GetInt("channel.test_frequency"))
+}
+
+func initHttpServer() {
+	if viper.GetString("gin_mode") != "debug" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	server := gin.New()
 	server.Use(gin.Recovery())
-	// This will cause SSE not to work!!!
-	//server.Use(gzip.Gzip(gzip.DefaultCompression))
 	server.Use(middleware.RequestId())
 	middleware.SetUpLogger(server)
-	// Initialize session store
-	store := cookie.NewStore([]byte(common.SessionSecret))
+
+	trustedHeader := viper.GetString("trusted_header")
+	if trustedHeader != "" {
+		server.TrustedPlatform = trustedHeader
+	}
+
+	store := cookie.NewStore([]byte(config.SessionSecret))
 	server.Use(sessions.Sessions("session", store))
 
 	router.SetRouter(server, buildFS, indexPage)
-	var port = os.Getenv("PORT")
-	if port == "" {
-		port = strconv.Itoa(*common.Port)
-	}
-	err = server.Run(":" + port)
+	port := viper.GetString("port")
+
+	err := server.Run(":" + port)
 	if err != nil {
-		common.FatalLog("failed to start HTTP server: " + err.Error())
+		logger.FatalLog("failed to start HTTP server: " + err.Error())
+	}
+}
+
+func SyncChannelCache(frequency int) {
+	// 只有 从 服务器端获取数据的时候才会用到
+	if config.IsMasterNode {
+		logger.SysLog("master node does't synchronize the channel")
+		return
+	}
+	for {
+		time.Sleep(time.Duration(frequency) * time.Second)
+		logger.SysLog("syncing channels from database")
+		model.ChannelGroup.Load()
+		model.PricingInstance.Init()
+		model.ModelOwnedBysInstance.Load()
 	}
 }

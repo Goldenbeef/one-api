@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"one-api/common"
+	"one-api/common/config"
 	"one-api/common/requester"
+	"one-api/common/utils"
 	"one-api/types"
 	"strings"
 )
@@ -16,6 +18,14 @@ type baiduStreamHandler struct {
 }
 
 func (p *BaiduProvider) CreateChatCompletion(request *types.ChatCompletionRequest) (*types.ChatCompletionResponse, *types.OpenAIErrorWithStatusCode) {
+
+	if p.UseOpenaiAPI {
+		if modelNameConvert, ok := modelNameMap[request.Model]; ok {
+			request.Model = modelNameConvert
+		}
+		return p.OpenAIProvider.CreateChatCompletion(request)
+	}
+
 	req, errWithCode := p.getBaiduChatRequest(request)
 	if errWithCode != nil {
 		return nil, errWithCode
@@ -33,6 +43,14 @@ func (p *BaiduProvider) CreateChatCompletion(request *types.ChatCompletionReques
 }
 
 func (p *BaiduProvider) CreateChatCompletionStream(request *types.ChatCompletionRequest) (requester.StreamReaderInterface[string], *types.OpenAIErrorWithStatusCode) {
+
+	if p.UseOpenaiAPI {
+		if modelNameConvert, ok := modelNameMap[request.Model]; ok {
+			request.Model = modelNameConvert
+		}
+		return p.OpenAIProvider.CreateChatCompletionStream(request)
+	}
+
 	req, errWithCode := p.getBaiduChatRequest(request)
 	if errWithCode != nil {
 		return nil, errWithCode
@@ -54,7 +72,7 @@ func (p *BaiduProvider) CreateChatCompletionStream(request *types.ChatCompletion
 }
 
 func (p *BaiduProvider) getBaiduChatRequest(request *types.ChatCompletionRequest) (*http.Request, *types.OpenAIErrorWithStatusCode) {
-	url, errWithCode := p.GetSupportedAPIUri(common.RelayModeChatCompletions)
+	url, errWithCode := p.GetSupportedAPIUri(config.RelayModeChatCompletions)
 	if errWithCode != nil {
 		return nil, errWithCode
 	}
@@ -81,10 +99,10 @@ func (p *BaiduProvider) getBaiduChatRequest(request *types.ChatCompletionRequest
 }
 
 func (p *BaiduProvider) convertToChatOpenai(response *BaiduChatResponse, request *types.ChatCompletionRequest) (openaiResponse *types.ChatCompletionResponse, errWithCode *types.OpenAIErrorWithStatusCode) {
-	error := errorHandle(&response.BaiduError)
-	if error != nil {
+	aiError := errorHandle(&response.BaiduError)
+	if aiError != nil {
 		errWithCode = &types.OpenAIErrorWithStatusCode{
-			OpenAIError: *error,
+			OpenAIError: *aiError,
 			StatusCode:  http.StatusBadRequest,
 		}
 		return
@@ -131,38 +149,56 @@ func (p *BaiduProvider) convertToChatOpenai(response *BaiduChatResponse, request
 }
 
 func convertFromChatOpenai(request *types.ChatCompletionRequest) *BaiduChatRequest {
-	messages := make([]BaiduMessage, 0, len(request.Messages))
+	request.ClearEmptyMessages()
+	baiduChatRequest := &BaiduChatRequest{
+		Messages:    make([]BaiduMessage, 0, len(request.Messages)),
+		Temperature: request.Temperature,
+		Stream:      request.Stream,
+		TopP:        request.TopP,
+		// PenaltyScore:    request.FrequencyPenalty,
+		MaxOutputTokens: request.MaxTokens,
+	}
+
+	if request.FrequencyPenalty != nil {
+		baiduChatRequest.PenaltyScore = utils.GetPointer(utils.NumClamp(*request.FrequencyPenalty, 1, 2))
+	}
+
+	if request.Stop != nil {
+		if stop, ok := request.Stop.(string); ok {
+			baiduChatRequest.Stop = []string{stop}
+		} else if stop, ok := request.Stop.([]string); ok {
+			baiduChatRequest.Stop = stop
+		}
+	}
+
+	if request.ResponseFormat != nil {
+		baiduChatRequest.ResponseFormat = request.ResponseFormat.Type
+
+	}
+
 	for _, message := range request.Messages {
 		if message.Role == types.ChatMessageRoleSystem {
-			messages = append(messages, BaiduMessage{
-				Role:    types.ChatMessageRoleUser,
-				Content: message.StringContent(),
+			baiduChatRequest.System = message.StringContent()
+			continue
+		} else if message.ToolCalls != nil {
+			baiduChatRequest.Messages = append(baiduChatRequest.Messages, BaiduMessage{
+				Role: types.ChatMessageRoleAssistant,
+				FunctionCall: &types.ChatCompletionToolCallsFunction{
+					Name:      *message.Name,
+					Arguments: "{}",
+				},
 			})
-			messages = append(messages, BaiduMessage{
-				Role:    types.ChatMessageRoleAssistant,
-				Content: "Okay",
-			})
-		} else if message.Role == types.ChatMessageRoleFunction {
-			messages = append(messages, BaiduMessage{
-				Role:    types.ChatMessageRoleAssistant,
-				Content: "Okay",
-			})
-			messages = append(messages, BaiduMessage{
+		} else if message.Role == types.ChatMessageRoleFunction || message.Role == types.ChatMessageRoleTool {
+			baiduChatRequest.Messages = append(baiduChatRequest.Messages, BaiduMessage{
 				Role:    types.ChatMessageRoleUser,
 				Content: "这是函数调用返回的内容，请回答之前的问题：\n" + message.StringContent(),
 			})
 		} else {
-			messages = append(messages, BaiduMessage{
+			baiduChatRequest.Messages = append(baiduChatRequest.Messages, BaiduMessage{
 				Role:    message.Role,
 				Content: message.StringContent(),
 			})
 		}
-	}
-
-	baiduChatRequest := &BaiduChatRequest{
-		Messages:    messages,
-		Temperature: request.Temperature,
-		Stream:      request.Stream,
 	}
 
 	if request.Tools != nil {
@@ -196,13 +232,13 @@ func (h *baiduStreamHandler) handlerStream(rawLine *[]byte, dataChan chan string
 		return
 	}
 
-	error := errorHandle(&baiduResponse.BaiduError)
-	if error != nil {
-		errChan <- error
+	aiError := errorHandle(&baiduResponse.BaiduError)
+	if aiError != nil {
+		errChan <- aiError
 		return
 	}
 
-	h.convertToOpenaiStream(&baiduResponse, dataChan, errChan)
+	h.convertToOpenaiStream(&baiduResponse, dataChan)
 
 	if baiduResponse.IsEnd {
 		errChan <- io.EOF
@@ -211,7 +247,7 @@ func (h *baiduStreamHandler) handlerStream(rawLine *[]byte, dataChan chan string
 	}
 }
 
-func (h *baiduStreamHandler) convertToOpenaiStream(baiduResponse *BaiduChatStreamResponse, dataChan chan string, errChan chan error) {
+func (h *baiduStreamHandler) convertToOpenaiStream(baiduResponse *BaiduChatStreamResponse, dataChan chan string) {
 	choice := types.ChatCompletionStreamChoice{
 		Index: 0,
 		Delta: types.ChatCompletionStreamChoiceDelta{

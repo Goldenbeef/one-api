@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"one-api/common"
+	"one-api/common/config"
 	"one-api/common/requester"
+	"one-api/common/utils"
 	"one-api/types"
 	"strings"
 )
@@ -15,9 +17,11 @@ type aliStreamHandler struct {
 	lastStreamResponse string
 }
 
-const AliEnableSearchModelSuffix = "-internet"
-
 func (p *AliProvider) CreateChatCompletion(request *types.ChatCompletionRequest) (*types.ChatCompletionResponse, *types.OpenAIErrorWithStatusCode) {
+	if p.UseOpenaiAPI {
+		return p.OpenAIProvider.CreateChatCompletion(request)
+	}
+
 	req, errWithCode := p.getAliChatRequest(request)
 	if errWithCode != nil {
 		return nil, errWithCode
@@ -35,6 +39,10 @@ func (p *AliProvider) CreateChatCompletion(request *types.ChatCompletionRequest)
 }
 
 func (p *AliProvider) CreateChatCompletionStream(request *types.ChatCompletionRequest) (requester.StreamReaderInterface[string], *types.OpenAIErrorWithStatusCode) {
+	if p.UseOpenaiAPI {
+		return p.OpenAIProvider.CreateChatCompletionStream(request)
+	}
+
 	req, errWithCode := p.getAliChatRequest(request)
 	if errWithCode != nil {
 		return nil, errWithCode
@@ -56,7 +64,7 @@ func (p *AliProvider) CreateChatCompletionStream(request *types.ChatCompletionRe
 }
 
 func (p *AliProvider) getAliChatRequest(request *types.ChatCompletionRequest) (*http.Request, *types.OpenAIErrorWithStatusCode) {
-	url, errWithCode := p.GetSupportedAPIUri(common.RelayModeChatCompletions)
+	url, errWithCode := p.GetSupportedAPIUri(config.RelayModeChatCompletions)
 	if errWithCode != nil {
 		return nil, errWithCode
 	}
@@ -70,7 +78,7 @@ func (p *AliProvider) getAliChatRequest(request *types.ChatCompletionRequest) (*
 		headers["X-DashScope-SSE"] = "enable"
 	}
 
-	aliRequest := convertFromChatOpenai(request)
+	aliRequest := p.convertFromChatOpenai(request)
 	// 创建请求
 	req, err := p.Requester.NewRequest(http.MethodPost, fullRequestURL, p.Requester.WithBody(aliRequest), p.Requester.WithHeader(headers))
 	if err != nil {
@@ -82,10 +90,10 @@ func (p *AliProvider) getAliChatRequest(request *types.ChatCompletionRequest) (*
 
 // 转换为OpenAI聊天请求体
 func (p *AliProvider) convertToChatOpenai(response *AliChatResponse, request *types.ChatCompletionRequest) (openaiResponse *types.ChatCompletionResponse, errWithCode *types.OpenAIErrorWithStatusCode) {
-	error := errorHandle(&response.AliError)
-	if error != nil {
+	aiError := errorHandle(&response.AliError)
+	if aiError != nil {
 		errWithCode = &types.OpenAIErrorWithStatusCode{
-			OpenAIError: *error,
+			OpenAIError: *aiError,
 			StatusCode:  http.StatusBadRequest,
 		}
 		return
@@ -94,7 +102,7 @@ func (p *AliProvider) convertToChatOpenai(response *AliChatResponse, request *ty
 	openaiResponse = &types.ChatCompletionResponse{
 		ID:      response.RequestId,
 		Object:  "chat.completion",
-		Created: common.GetTimestamp(),
+		Created: utils.GetTimestamp(),
 		Model:   request.Model,
 		Choices: response.Output.ToChatCompletionChoices(),
 		Usage: &types.Usage{
@@ -110,7 +118,8 @@ func (p *AliProvider) convertToChatOpenai(response *AliChatResponse, request *ty
 }
 
 // 阿里云聊天请求体
-func convertFromChatOpenai(request *types.ChatCompletionRequest) *AliChatRequest {
+func (p *AliProvider) convertFromChatOpenai(request *types.ChatCompletionRequest) *AliChatRequest {
+	request.ClearEmptyMessages()
 	messages := make([]AliMessage, 0, len(request.Messages))
 	for i := 0; i < len(request.Messages); i++ {
 		message := request.Messages[i]
@@ -141,23 +150,34 @@ func convertFromChatOpenai(request *types.ChatCompletionRequest) *AliChatRequest
 
 	}
 
-	enableSearch := false
-	aliModel := request.Model
-	if strings.HasSuffix(aliModel, AliEnableSearchModelSuffix) {
-		enableSearch = true
-		aliModel = strings.TrimSuffix(aliModel, AliEnableSearchModelSuffix)
-	}
-
-	return &AliChatRequest{
-		Model: aliModel,
+	aliChatRequest := &AliChatRequest{
+		Model: request.Model,
 		Input: AliInput{
 			Messages: messages,
 		},
 		Parameters: AliParameters{
 			ResultFormat:      "message",
-			EnableSearch:      enableSearch,
 			IncrementalOutput: request.Stream,
 		},
+	}
+
+	p.pluginHandle(aliChatRequest)
+
+	return aliChatRequest
+}
+
+func (p *AliProvider) pluginHandle(request *AliChatRequest) {
+	if p.Channel.Plugin == nil {
+		return
+	}
+
+	plugin := p.Channel.Plugin.Data()
+
+	// 检测是否开启了 web_search 插件
+	if pWeb, ok := plugin["web_search"]; ok {
+		if enable, ok := pWeb["enable"].(bool); ok && enable {
+			request.Parameters.EnableSearch = true
+		}
 	}
 }
 
@@ -179,17 +199,17 @@ func (h *aliStreamHandler) handlerStream(rawLine *[]byte, dataChan chan string, 
 		return
 	}
 
-	error := errorHandle(&aliResponse.AliError)
-	if error != nil {
-		errChan <- error
+	aiError := errorHandle(&aliResponse.AliError)
+	if aiError != nil {
+		errChan <- aiError
 		return
 	}
 
-	h.convertToOpenaiStream(&aliResponse, dataChan, errChan)
+	h.convertToOpenaiStream(&aliResponse, dataChan)
 
 }
 
-func (h *aliStreamHandler) convertToOpenaiStream(aliResponse *AliChatResponse, dataChan chan string, errChan chan error) {
+func (h *aliStreamHandler) convertToOpenaiStream(aliResponse *AliChatResponse, dataChan chan string) {
 	content := aliResponse.Output.Choices[0].Message.StringContent()
 
 	var choice types.ChatCompletionStreamChoice
@@ -213,7 +233,7 @@ func (h *aliStreamHandler) convertToOpenaiStream(aliResponse *AliChatResponse, d
 	streamResponse := types.ChatCompletionStreamResponse{
 		ID:      aliResponse.RequestId,
 		Object:  "chat.completion.chunk",
-		Created: common.GetTimestamp(),
+		Created: utils.GetTimestamp(),
 		Model:   h.Request.Model,
 		Choices: []types.ChatCompletionStreamChoice{choice},
 	}

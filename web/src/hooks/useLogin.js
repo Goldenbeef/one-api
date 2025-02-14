@@ -3,8 +3,10 @@ import { useDispatch } from 'react-redux';
 import { LOGIN } from 'store/actions';
 import { useNavigate } from 'react-router';
 import { showSuccess } from 'utils/common';
+import { useTranslation } from 'react-i18next';
 
 const useLogin = () => {
+  const { t } = useTranslation();
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const login = async (username, password) => {
@@ -28,16 +30,63 @@ const useLogin = () => {
 
   const githubLogin = async (code, state) => {
     try {
-      const res = await API.get(`/api/oauth/github?code=${code}&state=${state}`);
+      const affCode = localStorage.getItem('aff');
+      const res = await API.get(`/api/oauth/github?code=${code}&state=${state}&aff=${affCode}`);
       const { success, message, data } = res.data;
       if (success) {
         if (message === 'bind') {
-          showSuccess('绑定成功！');
+          showSuccess(t('common.bindOk'));
           navigate('/panel');
         } else {
           dispatch({ type: LOGIN, payload: data });
           localStorage.setItem('user', JSON.stringify(data));
-          showSuccess('登录成功！');
+          showSuccess(t('common.loginOk'));
+          navigate('/panel');
+        }
+      }
+      return { success, message };
+    } catch (err) {
+      // 请求失败，设置错误信息
+      return { success: false, message: '' };
+    }
+  };
+
+  const oidcLogin = async (code, state) => {
+    try {
+      const affCode = localStorage.getItem('aff');
+      const res = await API.get(`/api/oauth/oidc?code=${code}&state=${state}&aff=${affCode}`);
+      const { success, message, data } = res.data;
+      if (success) {
+        if (message === 'bind') {
+          showSuccess(t('common.bindOk'));
+          navigate('/panel');
+        } else {
+          dispatch({ type: LOGIN, payload: data });
+          localStorage.setItem('user', JSON.stringify(data));
+          showSuccess(t('common.loginOk'));
+          navigate('/panel');
+        }
+      }
+      return { success, message };
+    } catch (err) {
+      // 请求失败，设置错误信息
+      return { success: false, message: '' };
+    }
+  };
+
+  const larkLogin = async (code, state) => {
+    try {
+      const affCode = localStorage.getItem('aff');
+      const res = await API.get(`/api/oauth/lark?code=${code}&state=${state}&aff=${affCode}`);
+      const { success, message, data } = res.data;
+      if (success) {
+        if (message === 'bind') {
+          showSuccess(t('common.bindOk'));
+          navigate('/panel');
+        } else {
+          dispatch({ type: LOGIN, payload: data });
+          localStorage.setItem('user', JSON.stringify(data));
+          showSuccess(t('common.loginOk'));
           navigate('/panel');
         }
       }
@@ -50,12 +99,13 @@ const useLogin = () => {
 
   const wechatLogin = async (code) => {
     try {
-      const res = await API.get(`/api/oauth/wechat?code=${code}`);
+      const affCode = localStorage.getItem('aff');
+      const res = await API.get(`/api/oauth/wechat?code=${code}&aff=${affCode}`);
       const { success, message, data } = res.data;
       if (success) {
         dispatch({ type: LOGIN, payload: data });
         localStorage.setItem('user', JSON.stringify(data));
-        showSuccess('登录成功！');
+        showSuccess(t('common.loginOk'));
         navigate('/panel');
       }
       return { success, message };
@@ -72,7 +122,7 @@ const useLogin = () => {
     navigate('/');
   };
 
-  return { login, logout, githubLogin, wechatLogin };
+  return { login, logout, githubLogin, wechatLogin, larkLogin, oidcLogin };
 };
 
 export default useLogin;

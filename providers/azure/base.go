@@ -19,8 +19,9 @@ func (f AzureProviderFactory) Create(channel *model.Channel) base.ProviderInterf
 				Channel:   channel,
 				Requester: requester.NewHTTPRequester(*channel.Proxy, openai.RequestErrorHandle),
 			},
-			IsAzure:       true,
-			BalanceAction: false,
+			IsAzure:              true,
+			BalanceAction:        false,
+			SupportStreamOptions: true,
 		},
 	}
 }
@@ -35,6 +36,8 @@ func getAzureConfig() base.ProviderConfig {
 		AudioTranscriptions: "/audio/transcriptions",
 		AudioTranslations:   "/audio/translations",
 		ImagesGenerations:   "/images/generations",
+		ChatRealtime:        "/realtime",
+		ModelList:           "isGetAzureModelList", // 在azure中该参数不参与实际url拼接，只是起到flag的作用
 	}
 }
 

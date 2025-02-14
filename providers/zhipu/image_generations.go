@@ -3,17 +3,18 @@ package zhipu
 import (
 	"net/http"
 	"one-api/common"
+	"one-api/common/config"
 	"one-api/types"
 	"time"
 )
 
 func (p *ZhipuProvider) CreateImageGenerations(request *types.ImageRequest) (*types.ImageResponse, *types.OpenAIErrorWithStatusCode) {
-	url, errWithCode := p.GetSupportedAPIUri(common.RelayModeImagesGenerations)
+	url, errWithCode := p.GetSupportedAPIUri(config.RelayModeImagesGenerations)
 	if errWithCode != nil {
 		return nil, errWithCode
 	}
 	// 获取请求地址
-	fullRequestURL := p.GetFullRequestURL(url, request.Model)
+	fullRequestURL := p.GetFullRequestURL(url)
 	if fullRequestURL == "" {
 		return nil, common.ErrorWrapper(nil, "invalid_zhipu_config", http.StatusInternalServerError)
 	}
@@ -37,14 +38,14 @@ func (p *ZhipuProvider) CreateImageGenerations(request *types.ImageRequest) (*ty
 		return nil, errWithCode
 	}
 
-	return p.convertToImageOpenai(zhipuResponse, request)
+	return p.convertToImageOpenai(zhipuResponse)
 }
 
-func (p *ZhipuProvider) convertToImageOpenai(response *ZhipuImageGenerationResponse, request *types.ImageRequest) (openaiResponse *types.ImageResponse, errWithCode *types.OpenAIErrorWithStatusCode) {
-	error := errorHandle(&response.Error)
-	if error != nil {
+func (p *ZhipuProvider) convertToImageOpenai(response *ZhipuImageGenerationResponse) (openaiResponse *types.ImageResponse, errWithCode *types.OpenAIErrorWithStatusCode) {
+	aiError := errorHandle(&response.Error)
+	if aiError != nil {
 		errWithCode = &types.OpenAIErrorWithStatusCode{
-			OpenAIError: *error,
+			OpenAIError: *aiError,
 			StatusCode:  http.StatusBadRequest,
 		}
 		return

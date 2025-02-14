@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"one-api/common"
+	"one-api/common/utils"
 	"one-api/model"
 	"strconv"
 	"strings"
@@ -11,7 +13,7 @@ import (
 )
 
 func GetChannelsList(c *gin.Context) {
-	var params model.GenericParams
+	var params model.SearchChannelsParams
 	if err := c.ShouldBindQuery(&params); err != nil {
 		common.APIRespondWithError(c, http.StatusOK, err)
 		return
@@ -38,7 +40,7 @@ func GetChannel(c *gin.Context) {
 		})
 		return
 	}
-	channel, err := model.GetChannelById(id, false)
+	channel, err := model.GetChannelById(id)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -63,15 +65,30 @@ func AddChannel(c *gin.Context) {
 		})
 		return
 	}
-	channel.CreatedTime = common.GetTimestamp()
+	channel.CreatedTime = utils.GetTimestamp()
 	keys := strings.Split(channel.Key, "\n")
+
+	baseUrls := []string{}
+	if channel.BaseURL != nil && *channel.BaseURL != "" {
+		baseUrls = strings.Split(*channel.BaseURL, "\n")
+	}
 	channels := make([]model.Channel, 0, len(keys))
-	for _, key := range keys {
+	for index, key := range keys {
 		if key == "" {
 			continue
 		}
 		localChannel := channel
 		localChannel.Key = key
+		if index > 0 {
+			localChannel.Name = localChannel.Name + "_" + strconv.Itoa(index+1)
+		}
+
+		if len(baseUrls) > index && baseUrls[index] != "" {
+			localChannel.BaseURL = &baseUrls[index]
+		} else if len(baseUrls) > 0 {
+			localChannel.BaseURL = &baseUrls[0]
+		}
+
 		channels = append(channels, localChannel)
 	}
 	err = model.BatchInsertChannels(channels)
@@ -92,6 +109,22 @@ func DeleteChannel(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	channel := model.Channel{Id: id}
 	err := channel.Delete()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+}
+
+func DeleteChannelTag(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	err := model.DeleteChannelTag(id)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -131,7 +164,11 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
-	err = channel.Update()
+	if channel.Models == "" {
+		err = channel.Update(false)
+	} else {
+		err = channel.Update(true)
+	}
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -143,5 +180,56 @@ func UpdateChannel(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data":    channel,
+	})
+}
+
+func BatchUpdateChannelsAzureApi(c *gin.Context) {
+	var params model.BatchChannelsParams
+	err := c.ShouldBindJSON(&params)
+	if err != nil {
+		common.APIRespondWithError(c, http.StatusOK, err)
+		return
+	}
+
+	if params.Ids == nil || len(params.Ids) == 0 {
+		common.APIRespondWithError(c, http.StatusOK, errors.New("ids不能为空"))
+		return
+	}
+	var count int64
+	count, err = model.BatchUpdateChannelsAzureApi(&params)
+	if err != nil {
+		common.APIRespondWithError(c, http.StatusOK, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":    count,
+		"success": true,
+		"message": "更新成功",
+	})
+}
+
+func BatchDelModelChannels(c *gin.Context) {
+	var params model.BatchChannelsParams
+	err := c.ShouldBindJSON(&params)
+	if err != nil {
+		common.APIRespondWithError(c, http.StatusOK, err)
+		return
+	}
+
+	if params.Ids == nil || len(params.Ids) == 0 {
+		common.APIRespondWithError(c, http.StatusOK, errors.New("ids不能为空"))
+		return
+	}
+
+	var count int64
+	count, err = model.BatchDelModelChannels(&params)
+	if err != nil {
+		common.APIRespondWithError(c, http.StatusOK, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":    count,
+		"success": true,
+		"message": "更新成功",
 	})
 }

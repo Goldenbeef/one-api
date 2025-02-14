@@ -3,88 +3,60 @@ package image
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"net/http"
-	"regexp"
+	"one-api/common/config"
 	"strings"
 	"sync"
 
 	_ "golang.org/x/image/webp"
 )
 
-func IsImageUrl(url string) (bool, error) {
-	resp, err := http.Head(url)
-	if err != nil {
-		return false, err
+func GetImageFromUrl(url string) (mimeType string, data string, err error) {
+	if strings.HasPrefix(url, "data:") {
+		return ParseBase64File(url)
 	}
-	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "image/") {
-		return false, nil
-	}
-	return true, nil
-}
 
-func GetImageSizeFromUrl(url string) (width int, height int, err error) {
-	isImage, err := IsImageUrl(url)
-	if !isImage {
-		return
+	if !strings.HasPrefix(url, "http") {
+		return "", "", errors.New("invalid image url")
 	}
-	resp, err := http.Get(url)
+
+	resp, err := RequestFile(url, "base64")
 	if err != nil {
 		return
 	}
 	defer resp.Body.Close()
-	img, _, err := image.DecodeConfig(resp.Body)
-	if err != nil {
-		return
-	}
-	return img.Width, img.Height, nil
-}
 
-func GetImageFromUrl(url string) (mimeType string, data string, err error) {
-
-	if strings.HasPrefix(url, "data:image/") {
-		dataURLPattern := regexp.MustCompile(`data:image/([^;]+);base64,(.*)`)
-
-		matches := dataURLPattern.FindStringSubmatch(url)
-		if len(matches) == 3 && matches[2] != "" {
-			mimeType = "image/" + matches[1]
-			data = matches[2]
+	if config.CFWorkerImageUrl == "" {
+		buffer := bytes.NewBuffer(nil)
+		_, err = buffer.ReadFrom(resp.Body)
+		if err != nil {
 			return
 		}
-
-		err = errors.New("image base64 decode failed")
-		return
-	}
-
-	isImage, err := IsImageUrl(url)
-	if !isImage {
-		if err == nil {
-			err = errors.New("invalid image link")
+		mimeType = resp.Header.Get("Content-Type")
+		if mimeType == "application/octet-stream" {
+			firstBytes := buffer.Bytes()[:512]
+			actualMime := http.DetectContentType(firstBytes)
+			mimeType = actualMime
 		}
-		return
+		data = base64.StdEncoding.EncodeToString(buffer.Bytes())
+	} else {
+		var cfResp *CFResponse
+		err = json.NewDecoder(resp.Body).Decode(&cfResp)
+		if err != nil {
+			return
+		}
+		mimeType = cfResp.MimeType
+		data = cfResp.Data
 	}
-	resp, err := http.Get(url)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-	buffer := bytes.NewBuffer(nil)
-	_, err = buffer.ReadFrom(resp.Body)
-	if err != nil {
-		return
-	}
-	mimeType = resp.Header.Get("Content-Type")
-	data = base64.StdEncoding.EncodeToString(buffer.Bytes())
+
 	return
 }
-
-var (
-	reg = regexp.MustCompile(`data:image/([^;]+);base64,`)
-)
 
 var readerPool = sync.Pool{
 	New: func() interface{} {
@@ -92,15 +64,27 @@ var readerPool = sync.Pool{
 	},
 }
 
-func GetImageSizeFromBase64(encoded string) (width int, height int, err error) {
-	decoded, err := base64.StdEncoding.DecodeString(reg.ReplaceAllString(encoded, ""))
+func GetImageSizeFromBase64(encoded string) (width, height int, err error) {
+	if idx := strings.Index(encoded, ","); idx != -1 {
+		encoded = encoded[idx+1:]
+	}
+
+	// 计算64KB解码后的最大Base64字符串长度
+	maxEncodedLen := base64.StdEncoding.EncodedLen(64 * 1024)
+	if len(encoded) > maxEncodedLen {
+		encoded = encoded[:maxEncodedLen]
+	}
+
+	decodedBuf := make([]byte, base64.StdEncoding.DecodedLen(len(encoded)))
+	n, err := base64.StdEncoding.Decode(decodedBuf, []byte(encoded))
 	if err != nil {
 		return 0, 0, err
 	}
+	decodedBuf = decodedBuf[:n]
 
 	reader := readerPool.Get().(*bytes.Reader)
 	defer readerPool.Put(reader)
-	reader.Reset(decoded)
+	reader.Reset(decodedBuf)
 
 	img, _, err := image.DecodeConfig(reader)
 	if err != nil {
@@ -110,9 +94,45 @@ func GetImageSizeFromBase64(encoded string) (width int, height int, err error) {
 	return img.Width, img.Height, nil
 }
 
-func GetImageSize(image string) (width int, height int, err error) {
-	if strings.HasPrefix(image, "data:image/") {
-		return GetImageSizeFromBase64(image)
+func GetImageSizeFromUrl(url string) (width, height int, err error) {
+	resp, err := RequestFile(url, "get16kb")
+	if err != nil {
+		return 0, 0, err
 	}
-	return GetImageSizeFromUrl(image)
+	defer resp.Body.Close()
+
+	img, _, err := image.DecodeConfig(resp.Body)
+	if err != nil {
+		return 0, 0, err
+	}
+	return img.Width, img.Height, nil
+}
+
+func GetImageSize(image string) (width, height int, err error) {
+
+	switch {
+	case strings.HasPrefix(image, "data:image/"):
+		return GetImageSizeFromBase64(image)
+	case strings.HasPrefix(image, "http"):
+		return GetImageSizeFromUrl(image)
+	default:
+		return 0, 0, errors.New("invalid file type, please view request interface")
+	}
+}
+
+func ParseBase64File(base64Data string) (string, string, error) {
+	start := len("data:")
+	// 查找 ";base64," 的位置
+	base64Index := strings.Index(base64Data, ";base64,")
+	if base64Index == -1 {
+		return "", "", errors.New("base64 decode failed")
+	}
+
+	mimeType := base64Data[start:base64Index]
+	base64Data = base64Data[base64Index+len(";base64,"):]
+	if base64Data == "" {
+		return "", "", errors.New("empty base64 data")
+	}
+
+	return mimeType, base64Data, nil
 }
