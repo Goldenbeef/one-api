@@ -2,11 +2,16 @@ package model
 
 import (
 	"fmt"
+	"net/url"
 	"one-api/common"
-	"os"
+	"one-api/common/config"
+	"one-api/common/logger"
+	"one-api/common/utils"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/spf13/viper"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
@@ -15,11 +20,29 @@ import (
 
 var DB *gorm.DB
 
+func SetupDB() {
+	err := InitDB()
+	if err != nil {
+		logger.FatalLog("failed to initialize database: " + err.Error())
+	}
+	ChannelGroup.Load()
+	GlobalUserGroupRatio.Load()
+	config.RootUserEmail = GetRootUserEmail()
+	NewModelOwnedBys()
+
+	if viper.GetBool("batch_update_enabled") {
+		config.BatchUpdateEnabled = true
+		config.BatchUpdateInterval = utils.GetOrDefault("batch_update_interval", 5)
+		logger.SysLog("batch update enabled with interval " + strconv.Itoa(config.BatchUpdateInterval) + "s")
+		InitBatchUpdater()
+	}
+}
+
 func createRootAccountIfNeed() error {
 	var user User
 	//if user.Status != common.UserStatusEnabled {
 	if err := DB.First(&user).Error; err != nil {
-		common.SysLog("no user exists, create a root user for you: username is root, password is 123456")
+		logger.SysLog("no user exists, create a root user for you: username is root, password is 123456")
 		hashedPassword, err := common.Password2Hash("123456")
 		if err != nil {
 			return err
@@ -27,10 +50,10 @@ func createRootAccountIfNeed() error {
 		rootUser := User{
 			Username:    "root",
 			Password:    hashedPassword,
-			Role:        common.RoleRootUser,
-			Status:      common.UserStatusEnabled,
+			Role:        config.RoleRootUser,
+			Status:      config.UserStatusEnabled,
 			DisplayName: "Root User",
-			AccessToken: common.GetUUID(),
+			AccessToken: utils.GetUUID(),
 			Quota:       100000000,
 		}
 		DB.Create(&rootUser)
@@ -39,30 +62,37 @@ func createRootAccountIfNeed() error {
 }
 
 func chooseDB() (*gorm.DB, error) {
-	if os.Getenv("SQL_DSN") != "" {
-		dsn := os.Getenv("SQL_DSN")
+	if viper.IsSet("sql_dsn") {
+		dsn := viper.GetString("sql_dsn")
+		localTimezone := utils.GetLocalTimezone()
 		if strings.HasPrefix(dsn, "postgres://") {
 			// Use PostgreSQL
-			common.SysLog("using PostgreSQL as database")
+			logger.SysLog("using PostgreSQL as database")
 			common.UsingPostgreSQL = true
+			dsn = dsnAddArg(dsn, "timezone", localTimezone)
+
 			return gorm.Open(postgres.New(postgres.Config{
 				DSN:                  dsn,
 				PreferSimpleProtocol: true, // disables implicit prepared statement usage
 			}), &gorm.Config{
 				PrepareStmt: true, // precompile SQL
 			})
+
 		}
 		// Use MySQL
-		common.SysLog("using MySQL as database")
+		logger.SysLog("using MySQL as database")
+		// mysql 时区设置
+		dsn = dsnAddArg(dsn, "loc", localTimezone)
+		// dsn = dsnAddArg(dsn, "parseTime", "true")
 		return gorm.Open(mysql.Open(dsn), &gorm.Config{
 			PrepareStmt: true, // precompile SQL
 		})
 	}
 	// Use SQLite
-	common.SysLog("SQL_DSN not set, using SQLite as database")
+	logger.SysLog("SQL_DSN not set, using SQLite as database")
 	common.UsingSQLite = true
-	config := fmt.Sprintf("?_busy_timeout=%d", common.SQLiteBusyTimeout)
-	return gorm.Open(sqlite.Open(common.SQLitePath+config), &gorm.Config{
+	config := fmt.Sprintf("?_busy_timeout=%d", utils.GetOrDefault("sqlite_busy_timeout", 3000))
+	return gorm.Open(sqlite.Open(viper.GetString("sqlite_path")+config), &gorm.Config{
 		PrepareStmt: true, // precompile SQL
 	})
 }
@@ -70,7 +100,7 @@ func chooseDB() (*gorm.DB, error) {
 func InitDB() (err error) {
 	db, err := chooseDB()
 	if err == nil {
-		if common.DebugEnabled {
+		if config.Debug {
 			db = db.Debug()
 		}
 		DB = db
@@ -78,14 +108,18 @@ func InitDB() (err error) {
 		if err != nil {
 			return err
 		}
-		sqlDB.SetMaxIdleConns(common.GetOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetOrDefault("SQL_MAX_LIFETIME", 60)))
 
-		if !common.IsMasterNode {
+		sqlDB.SetMaxIdleConns(utils.GetOrDefault("SQL_MAX_IDLE_CONNS", 100))
+		sqlDB.SetMaxOpenConns(utils.GetOrDefault("SQL_MAX_OPEN_CONNS", 1000))
+		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(utils.GetOrDefault("SQL_MAX_LIFETIME", 60)))
+
+		if !config.IsMasterNode {
 			return nil
 		}
-		common.SysLog("database migration started")
+		logger.SysLog("database migration started")
+
+		migrationBefore(DB)
+
 		err = db.AutoMigrate(&Channel{})
 		if err != nil {
 			return err
@@ -106,10 +140,6 @@ func InitDB() (err error) {
 		if err != nil {
 			return err
 		}
-		err = db.AutoMigrate(&Ability{})
-		if err != nil {
-			return err
-		}
 		err = db.AutoMigrate(&Log{})
 		if err != nil {
 			return err
@@ -118,14 +148,70 @@ func InitDB() (err error) {
 		if err != nil {
 			return err
 		}
-		common.SysLog("database migrated")
+		err = db.AutoMigrate(&Price{})
+		if err != nil {
+			return err
+		}
+		err = db.AutoMigrate(&Midjourney{})
+		if err != nil {
+			return err
+		}
+
+		err = db.AutoMigrate(&Payment{})
+		if err != nil {
+			return err
+		}
+		err = db.AutoMigrate(&Order{})
+		if err != nil {
+			return err
+		}
+		err = db.AutoMigrate(&Task{})
+		if err != nil {
+			return err
+		}
+		err = db.AutoMigrate(&Statistics{})
+		if err != nil {
+			return err
+		}
+
+		err = db.AutoMigrate(&UserGroup{})
+		if err != nil {
+			return err
+		}
+
+		err = db.AutoMigrate(&ModelOwnedBy{})
+		if err != nil {
+			return err
+		}
+
+		migrationAfter(DB)
+
+		logger.SysLog("database migrated")
 		err = createRootAccountIfNeed()
 		return err
 	} else {
-		common.FatalLog(err)
+		logger.FatalLog(err)
 	}
 	return err
 }
+
+// func MigrateDB(db *gorm.DB) error {
+// 	if DB.Migrator().HasConstraint(&Price{}, "model") {
+// 		fmt.Println("----Price model has constraint----")
+// 		// 如果是主键，移除主键约束
+// 		err := db.Migrator().DropConstraint(&Price{}, "model")
+// 		if err != nil {
+// 			return err
+// 		}
+// 		// 修改字段长度
+// 		err = db.Migrator().AlterColumn(&Price{}, "model")
+// 		if err != nil {
+// 			return err
+// 		}
+// 	}
+
+// 	return nil
+// }
 
 func CloseDB() error {
 	sqlDB, err := DB.DB()
@@ -134,4 +220,20 @@ func CloseDB() error {
 	}
 	err = sqlDB.Close()
 	return err
+}
+
+func dsnAddArg(dsn string, arg string, value string) string {
+	// 如果是MySQL 需要转义
+	if !common.UsingPostgreSQL {
+		value = url.QueryEscape(value)
+	}
+
+	if !strings.Contains(dsn, arg+"=") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&" + arg + "=" + value
+		} else {
+			dsn += "?" + arg + "=" + value
+		}
+	}
+	return dsn
 }

@@ -1,33 +1,46 @@
 package model
 
 import (
-	"one-api/common"
+	"one-api/common/config"
+	"one-api/common/logger"
+	"one-api/common/utils"
+	"strings"
 
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
 type Channel struct {
 	Id                 int     `json:"id"`
-	Type               int     `json:"type" gorm:"default:0"`
-	Key                string  `json:"key" gorm:"type:varchar(767);not null;index"`
-	Status             int     `json:"status" gorm:"default:1"`
-	Name               string  `json:"name" gorm:"index"`
-	Weight             *uint   `json:"weight" gorm:"default:0"`
+	Type               int     `json:"type" form:"type" gorm:"default:0"`
+	Key                string  `json:"key" form:"key" gorm:"type:text"`
+	Status             int     `json:"status" form:"status" gorm:"default:1"`
+	Name               string  `json:"name" form:"name" gorm:"index"`
+	Weight             *uint   `json:"weight" gorm:"default:1"`
 	CreatedTime        int64   `json:"created_time" gorm:"bigint"`
 	TestTime           int64   `json:"test_time" gorm:"bigint"`
 	ResponseTime       int     `json:"response_time"` // in milliseconds
 	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`
-	Other              string  `json:"other"`
+	Other              string  `json:"other" form:"other"`
 	Balance            float64 `json:"balance"` // in USD
 	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`
-	Models             string  `json:"models"`
-	Group              string  `json:"group" gorm:"type:varchar(32);default:'default'"`
+	Models             string  `json:"models" form:"models"`
+	Group              string  `json:"group" form:"group" gorm:"type:varchar(32);default:'default'"`
+	Tag                string  `json:"tag" form:"tag" gorm:"type:varchar(32);default:''"`
 	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
 	ModelMapping       *string `json:"model_mapping" gorm:"type:varchar(1024);default:''"`
+	ModelHeaders       *string `json:"model_headers" gorm:"type:varchar(1024);default:''"`
 	Priority           *int64  `json:"priority" gorm:"bigint;default:0"`
 	Proxy              *string `json:"proxy" gorm:"type:varchar(255);default:''"`
-	TestModel          string  `json:"test_model" gorm:"type:varchar(50);default:''"`
+	TestModel          string  `json:"test_model" form:"test_model" gorm:"type:varchar(50);default:''"`
+	OnlyChat           bool    `json:"only_chat" form:"only_chat" gorm:"default:false"`
+	PreCost            int     `json:"pre_cost" form:"pre_cost" gorm:"default:1"`
+
+	Plugin    *datatypes.JSONType[PluginType] `json:"plugin" form:"plugin" gorm:"type:json"`
+	DeletedAt gorm.DeletedAt                  `json:"-" gorm:"index"`
 }
+
+type PluginType map[string]map[string]interface{}
 
 var allowedChannelOrderFields = map[string]bool{
 	"id":            true,
@@ -40,19 +53,60 @@ var allowedChannelOrderFields = map[string]bool{
 	"priority":      true,
 }
 
-func GetChannelsList(params *GenericParams) (*DataResult[Channel], error) {
+type SearchChannelsParams struct {
+	Channel
+	PaginationParams
+	FilterTag bool `json:"filter_tag" form:"filter_tag"`
+}
+
+func GetChannelsList(params *SearchChannelsParams) (*DataResult[Channel], error) {
 	var channels []*Channel
 
 	db := DB.Omit("key")
-	if params.Keyword != "" {
-		keyCol := "`key`"
-		if common.UsingPostgreSQL {
-			keyCol = `"key"`
-		}
-		db = db.Where("id = ? or name LIKE ? or "+keyCol+" = ?", common.String2Int(params.Keyword), params.Keyword+"%", params.Keyword)
+
+	if params.Type != 0 {
+		db = db.Where("type = ?", params.Type)
 	}
 
-	return PaginateAndOrder[Channel](db, &params.PaginationParams, &channels, allowedChannelOrderFields)
+	if params.Status != 0 {
+		db = db.Where("status = ?", params.Status)
+	}
+
+	if params.Name != "" {
+		db = db.Where("name LIKE ?", "%"+params.Name+"%")
+	}
+
+	if params.Group != "" {
+		groupKey := quotePostgresField("group")
+		db = db.Where("( "+groupKey+" LIKE ? OR "+groupKey+" LIKE ? OR "+groupKey+" LIKE ? OR "+groupKey+" = ?)",
+			"%,"+params.Group+",%", params.Group+",%", "%,"+params.Group, params.Group)
+	}
+
+	if params.Models != "" {
+		db = db.Where("models LIKE ?", "%"+params.Models+"%")
+	}
+
+	if params.Other != "" {
+		db = db.Where("other LIKE ?", params.Other+"%")
+	}
+
+	if params.Key != "" {
+		db = db.Where(quotePostgresField("key")+" = ?", params.Key)
+	}
+
+	if params.TestModel != "" {
+		db = db.Where("test_model LIKE ?", params.TestModel+"%")
+	}
+
+	if params.Tag != "" {
+		db = db.Where("tag = ?", params.Tag)
+	}
+
+	if params.FilterTag {
+		db = db.Where("tag = ''")
+	}
+
+	return PaginateAndOrder(db, &params.PaginationParams, &channels, allowedChannelOrderFields)
 }
 
 func GetAllChannels() ([]*Channel, error) {
@@ -61,30 +115,80 @@ func GetAllChannels() ([]*Channel, error) {
 	return channels, err
 }
 
-func GetChannelById(id int, selectAll bool) (*Channel, error) {
+func GetChannelById(id int) (*Channel, error) {
 	channel := Channel{Id: id}
 	var err error = nil
-	if selectAll {
-		err = DB.First(&channel, "id = ?", id).Error
-	} else {
-		err = DB.Omit("key").First(&channel, "id = ?", id).Error
-	}
+	err = DB.First(&channel, "id = ?", id).Error
+
 	return &channel, err
 }
 
+func GetChannelsByTag(tag string) ([]*Channel, error) {
+	var channels []*Channel
+	err := DB.Where("tag = ?", tag).Find(&channels).Error
+	return channels, err
+}
+
+func DeleteChannelTag(channelId int) error {
+	err := DB.Model(&Channel{}).Where("id = ?", channelId).Update("tag", "").Error
+	return err
+}
+
 func BatchInsertChannels(channels []Channel) error {
-	var err error
-	err = DB.Create(&channels).Error
+	err := DB.Omit("UsedQuota").Create(&channels).Error
 	if err != nil {
 		return err
 	}
-	for _, channel_ := range channels {
-		err = channel_.AddAbilities()
-		if err != nil {
-			return err
-		}
-	}
+
+	ChannelGroup.Load()
 	return nil
+}
+
+type BatchChannelsParams struct {
+	Value string `json:"value" form:"value" binding:"required"`
+	Ids   []int  `json:"ids" form:"ids" binding:"required"`
+}
+
+func BatchUpdateChannelsAzureApi(params *BatchChannelsParams) (int64, error) {
+	db := DB.Model(&Channel{}).Where("id IN ?", params.Ids).Update("other", params.Value)
+	if db.Error != nil {
+		return 0, db.Error
+	}
+
+	if db.RowsAffected > 0 {
+		go ChannelGroup.Load()
+	}
+	return db.RowsAffected, nil
+}
+
+func BatchDelModelChannels(params *BatchChannelsParams) (int64, error) {
+	var count int64
+
+	var channels []*Channel
+	err := DB.Select("id, models, "+quotePostgresField("group")).Find(&channels, "id IN ?", params.Ids).Error
+	if err != nil {
+		return 0, err
+	}
+
+	for _, channel := range channels {
+		modelsSlice := strings.Split(channel.Models, ",")
+		for i, m := range modelsSlice {
+			if m == params.Value {
+				modelsSlice = append(modelsSlice[:i], modelsSlice[i+1:]...)
+				break
+			}
+		}
+
+		channel.Models = strings.Join(modelsSlice, ",")
+		channel.UpdateRaw(false)
+		count++
+	}
+
+	if count > 0 {
+		go ChannelGroup.Load()
+	}
+
+	return count, nil
 }
 
 func (channel *Channel) GetPriority() int64 {
@@ -109,69 +213,97 @@ func (channel *Channel) GetModelMapping() string {
 }
 
 func (channel *Channel) Insert() error {
-	var err error
-	err = DB.Create(channel).Error
-	if err != nil {
-		return err
+	err := DB.Omit("UsedQuota").Create(channel).Error
+	if err == nil {
+		ChannelGroup.Load()
 	}
-	err = channel.AddAbilities()
+
 	return err
 }
 
-func (channel *Channel) Update() error {
+func (channel *Channel) Update(overwrite bool) error {
+
+	err := channel.UpdateRaw(overwrite)
+
+	if err == nil {
+		go ChannelGroup.Load()
+	}
+
+	return err
+}
+
+func (channel *Channel) UpdateRaw(overwrite bool) error {
 	var err error
-	err = DB.Model(channel).Updates(channel).Error
+
+	if overwrite {
+		err = DB.Model(channel).Select("*").Omit("UsedQuota").Updates(channel).Error
+	} else {
+		err = DB.Model(channel).Omit("UsedQuota").Updates(channel).Error
+	}
 	if err != nil {
 		return err
 	}
 	DB.Model(channel).First(channel, "id = ?", channel.Id)
-	err = channel.UpdateAbilities()
 	return err
 }
 
 func (channel *Channel) UpdateResponseTime(responseTime int64) {
 	err := DB.Model(channel).Select("response_time", "test_time").Updates(Channel{
-		TestTime:     common.GetTimestamp(),
+		TestTime:     utils.GetTimestamp(),
 		ResponseTime: int(responseTime),
 	}).Error
 	if err != nil {
-		common.SysError("failed to update response time: " + err.Error())
+		logger.SysError("failed to update response time: " + err.Error())
 	}
 }
 
 func (channel *Channel) UpdateBalance(balance float64) {
 	err := DB.Model(channel).Select("balance_updated_time", "balance").Updates(Channel{
-		BalanceUpdatedTime: common.GetTimestamp(),
+		BalanceUpdatedTime: utils.GetTimestamp(),
 		Balance:            balance,
 	}).Error
 	if err != nil {
-		common.SysError("failed to update balance: " + err.Error())
+		logger.SysError("failed to update balance: " + err.Error())
 	}
 }
 
 func (channel *Channel) Delete() error {
-	var err error
-	err = DB.Delete(channel).Error
-	if err != nil {
-		return err
+	err := DB.Delete(channel).Error
+	if err == nil {
+		ChannelGroup.Load()
 	}
-	err = channel.DeleteAbilities()
 	return err
 }
 
+func (channel *Channel) StatusToStr() string {
+	switch channel.Status {
+	case config.ChannelStatusEnabled:
+		return "启用"
+	case config.ChannelStatusAutoDisabled:
+		return "自动禁用"
+	case config.ChannelStatusManuallyDisabled:
+		return "手动禁用"
+	}
+
+	return "禁用"
+}
+
 func UpdateChannelStatusById(id int, status int) {
-	err := UpdateAbilityStatus(id, status == common.ChannelStatusEnabled)
+	tx := DB.Begin()
+	err := tx.Model(&Channel{}).Where("id = ?", id).Update("status", status).Error
 	if err != nil {
-		common.SysError("failed to update ability status: " + err.Error())
+		logger.SysError("failed to update channel status: " + err.Error())
+		tx.Rollback()
+		return
 	}
-	err = DB.Model(&Channel{}).Where("id = ?", id).Update("status", status).Error
-	if err != nil {
-		common.SysError("failed to update channel status: " + err.Error())
-	}
+
+	tx.Commit()
+
+	go ChannelGroup.ChangeStatus(id, status == config.ChannelStatusEnabled)
 }
 
 func UpdateChannelUsedQuota(id int, quota int) {
-	if common.BatchUpdateEnabled {
+	if config.BatchUpdateEnabled {
 		addNewRecord(BatchUpdateTypeChannelUsedQuota, id, quota)
 		return
 	}
@@ -181,17 +313,12 @@ func UpdateChannelUsedQuota(id int, quota int) {
 func updateChannelUsedQuota(id int, quota int) {
 	err := DB.Model(&Channel{}).Where("id = ?", id).Update("used_quota", gorm.Expr("used_quota + ?", quota)).Error
 	if err != nil {
-		common.SysError("failed to update channel used quota: " + err.Error())
+		logger.SysError("failed to update channel used quota: " + err.Error())
 	}
 }
 
-func DeleteChannelByStatus(status int64) (int64, error) {
-	result := DB.Where("status = ?", status).Delete(&Channel{})
-	return result.RowsAffected, result.Error
-}
-
 func DeleteDisabledChannel() (int64, error) {
-	result := DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
+	result := DB.Where("status = ? or status = ?", config.ChannelStatusAutoDisabled, config.ChannelStatusManuallyDisabled).Delete(&Channel{})
 	return result.RowsAffected, result.Error
 }
 

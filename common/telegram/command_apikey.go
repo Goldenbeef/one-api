@@ -3,7 +3,7 @@ package telegram
 import (
 	"fmt"
 	"net/url"
-	"one-api/common"
+	"one-api/common/config"
 	"one-api/model"
 	"strings"
 
@@ -56,16 +56,17 @@ func getApikeyList(userId, page int) (message string, pageParams *paginationPara
 	}
 
 	chatUrlTmp := ""
-	if common.ServerAddress != "" {
+	if config.ServerAddress != "" {
 		chatUrlTmp = getChatUrl()
 	}
 
 	message = "点击令牌可复制：\n"
 
 	for _, token := range *list.Data {
-		message += fmt.Sprintf("*%s* : `%s`\n", escapeText(token.Name, "MarkdownV2"), token.Key)
+		key := "sk-" + token.Key
+		message += fmt.Sprintf("*%s* : `%s`\n", escapeText(token.Name, "MarkdownV2"), key)
 		if chatUrlTmp != "" {
-			message += strings.ReplaceAll(chatUrlTmp, `setToken`, token.Key)
+			message += strings.ReplaceAll(chatUrlTmp, `setToken`, key)
 		}
 		message += "\n"
 	}
@@ -74,11 +75,11 @@ func getApikeyList(userId, page int) (message string, pageParams *paginationPara
 }
 
 func getChatUrl() string {
-	serverAddress := strings.TrimSuffix(common.ServerAddress, "/")
+	serverAddress := strings.TrimSuffix(config.ServerAddress, "/")
 	chatNextUrl := fmt.Sprintf(`{"key":"setToken","url":"%s"}`, serverAddress)
 	chatNextUrl = "https://chat.oneapi.pro/#/?settings=" + url.QueryEscape(chatNextUrl)
-	if common.ChatLink != "" {
-		chatLink := strings.TrimSuffix(common.ChatLink, "/")
+	if config.ChatLink != "" {
+		chatLink := strings.TrimSuffix(config.ChatLink, "/")
 		chatNextUrl = strings.ReplaceAll(chatNextUrl, `https://chat.oneapi.pro`, chatLink)
 	}
 

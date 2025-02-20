@@ -132,6 +132,24 @@ export default function themeTypography(theme) {
       width: '44px',
       height: '44px',
       fontSize: '1.5rem'
+    },
+    menuButton: {
+      color: theme.menuButtonColor,
+      background: theme.menuButton
+    },
+    menuChip: {
+      background: theme.menuChip
+    },
+    CardWrapper: {
+      backgroundColor: theme.mode === 'dark' ? theme.colors.darkLevel2 : theme.colors.primaryDark
+    },
+    SubCard: {
+      border: theme.mode === 'dark' ? '1px solid rgba(227, 232, 239, 0.2)' : '1px solid rgb(227, 232, 239)'
+    },
+    LoginButton: {
+      color: theme.darkTextPrimary,
+      backgroundColor: theme.mode === 'dark' ? theme.backgroundDefault : theme.colors?.grey50,
+      borderColor: theme.mode === 'dark' ? theme.colors?.grey700 : theme.colors?.grey100
     }
   };
 }

@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"one-api/common"
+	"one-api/common/config"
 	"strings"
 
 	"gorm.io/gorm"
@@ -43,11 +44,11 @@ func PaginateAndOrder[T modelable](db *gorm.DB, params *PaginationParams, result
 		params.Page = 1
 	}
 	if params.Size < 1 {
-		params.Size = common.ItemsPerPage
+		params.Size = config.ItemsPerPage
 	}
 
-	if params.Size > common.MaxRecentItems {
-		return nil, fmt.Errorf("size 参数不能超过 %d", common.MaxRecentItems)
+	if params.Size > config.MaxRecentItems {
+		return nil, fmt.Errorf("size 参数不能超过 %d", config.MaxRecentItems)
 	}
 
 	offset := (params.Page - 1) * params.Size
@@ -119,4 +120,44 @@ func getTimestampGroupsSelect(fieldName, groupType, alias string) string {
 	}
 
 	return groupSelect
+}
+
+func quotePostgresField(field string) string {
+	if common.UsingPostgreSQL {
+		return fmt.Sprintf(`"%s"`, field)
+	}
+
+	return fmt.Sprintf("`%s`", field)
+}
+
+func assembleSumSelectStr(selectStr string) string {
+	sumSelectStr := "%s(sum(%s),0)"
+	nullfunc := "ifnull"
+	if common.UsingPostgreSQL {
+		nullfunc = "coalesce"
+	}
+
+	sumSelectStr = fmt.Sprintf(sumSelectStr, nullfunc, selectStr)
+
+	return sumSelectStr
+}
+
+func RecordExists(table interface{}, fieldName string, fieldValue interface{}, excludeID interface{}) bool {
+	var count int64
+	query := DB.Model(table).Where(fmt.Sprintf("%s = ?", fieldName), fieldValue)
+	if excludeID != nil {
+		query = query.Not("id", excludeID)
+	}
+	query.Count(&count)
+	return count > 0
+}
+
+func GetFieldsByID(model interface{}, fieldNames []string, id int, result interface{}) error {
+	err := DB.Model(model).Where("id = ?", id).Select(fieldNames).Find(result).Error
+	return err
+}
+
+func UpdateFieldsByID(model interface{}, id int, fields map[string]interface{}) error {
+	err := DB.Model(model).Where("id = ?", id).Updates(fields).Error
+	return err
 }

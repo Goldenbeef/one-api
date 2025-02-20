@@ -3,7 +3,11 @@ package requester
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"net/http"
+	"one-api/common/logger"
+	"one-api/types"
+	"runtime/debug"
 )
 
 var StreamClosed = []byte("stream_closed")
@@ -23,6 +27,7 @@ type StreamReaderInterface[T streamable] interface {
 type streamReader[T streamable] struct {
 	reader   *bufio.Reader
 	response *http.Response
+	NoTrim   bool
 
 	handlerPrefix HandlerPrefix[T]
 
@@ -31,7 +36,23 @@ type streamReader[T streamable] struct {
 }
 
 func (stream *streamReader[T]) Recv() (<-chan T, <-chan error) {
-	go stream.processLines()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.SysError(fmt.Sprintf("Panic in streamReader.processLines: %v", r))
+				logger.SysError(fmt.Sprintf("stacktrace from panic: %s", string(debug.Stack())))
+
+				err := &types.OpenAIError{
+					Code:    "system error",
+					Message: "stream processing panic",
+					Type:    "system_error",
+				}
+
+				stream.ErrChan <- err
+			}
+		}()
+		stream.processLines()
+	}()
 
 	return stream.DataChan, stream.ErrChan
 }
@@ -44,18 +65,21 @@ func (stream *streamReader[T]) processLines() {
 			stream.ErrChan <- readErr
 			return
 		}
-		noSpaceLine := bytes.TrimSpace(rawLine)
-		if len(noSpaceLine) == 0 {
+
+		if !stream.NoTrim {
+			rawLine = bytes.TrimSpace(rawLine)
+			if len(rawLine) == 0 {
+				continue
+			}
+		}
+
+		stream.handlerPrefix(&rawLine, stream.DataChan, stream.ErrChan)
+
+		if rawLine == nil {
 			continue
 		}
 
-		stream.handlerPrefix(&noSpaceLine, stream.DataChan, stream.ErrChan)
-
-		if noSpaceLine == nil {
-			continue
-		}
-
-		if bytes.Equal(noSpaceLine, StreamClosed) {
+		if bytes.Equal(rawLine, StreamClosed) {
 			return
 		}
 	}

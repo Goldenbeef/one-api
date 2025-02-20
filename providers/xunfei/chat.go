@@ -3,10 +3,13 @@ package xunfei
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"one-api/common"
+	"one-api/common/config"
 	"one-api/common/requester"
+	"one-api/common/utils"
 	"one-api/types"
 	"strings"
 
@@ -57,12 +60,12 @@ func (p *XunfeiProvider) CreateChatCompletionStream(request *types.ChatCompletio
 }
 
 func (p *XunfeiProvider) getChatRequest(request *types.ChatCompletionRequest) (*websocket.Conn, *types.OpenAIErrorWithStatusCode) {
-	url, errWithCode := p.GetSupportedAPIUri(common.RelayModeChatCompletions)
+	_, errWithCode := p.GetSupportedAPIUri(config.RelayModeChatCompletions)
 	if errWithCode != nil {
 		return nil, errWithCode
 	}
 
-	authUrl := p.GetFullRequestURL(url, request.Model)
+	authUrl := p.GetFullRequestURL(request.Model)
 
 	wsConn, err := p.wsRequester.NewRequest(authUrl, nil)
 	if err != nil {
@@ -73,18 +76,24 @@ func (p *XunfeiProvider) getChatRequest(request *types.ChatCompletionRequest) (*
 }
 
 func (p *XunfeiProvider) convertFromChatOpenai(request *types.ChatCompletionRequest) *XunfeiChatRequest {
+	request.ClearEmptyMessages()
 	messages := make([]XunfeiMessage, 0, len(request.Messages))
 	for _, message := range request.Messages {
-		if message.Role == "system" {
+		if message.FunctionCall != nil || message.ToolCalls != nil {
+			useToolName := ""
+			useToolArgs := ""
+			if message.ToolCalls != nil {
+				useToolName = message.ToolCalls[0].Function.Name
+				useToolArgs = message.ToolCalls[0].Function.Arguments
+			} else {
+				useToolName = message.FunctionCall.Name
+				useToolArgs = message.FunctionCall.Arguments
+			}
 			messages = append(messages, XunfeiMessage{
-				Role:    types.ChatMessageRoleUser,
-				Content: message.StringContent(),
+				Role:    message.Role,
+				Content: fmt.Sprintf("使用工具：%s，参数：%s", useToolName, useToolArgs),
 			})
-			messages = append(messages, XunfeiMessage{
-				Role:    types.ChatMessageRoleAssistant,
-				Content: "Okay",
-			})
-		} else if message.Role == types.ChatMessageRoleFunction {
+		} else if message.Role == types.ChatMessageRoleFunction || message.Role == types.ChatMessageRoleTool {
 			messages = append(messages, XunfeiMessage{
 				Role:    types.ChatMessageRoleUser,
 				Content: "这是函数调用返回的内容，请回答之前的问题：\n" + message.StringContent(),
@@ -187,7 +196,7 @@ func (h *xunfeiHandler) convertToChatOpenai(stream requester.StreamReaderInterfa
 		ID:      xunfeiResponse.Header.Sid,
 		Object:  "chat.completion",
 		Model:   h.Request.Model,
-		Created: common.GetTimestamp(),
+		Created: utils.GetTimestamp(),
 		Choices: []types.ChatCompletionChoice{choice},
 		Usage:   &xunfeiResponse.Payload.Usage.Text,
 	}
@@ -208,9 +217,9 @@ func (h *xunfeiHandler) handlerData(rawLine *[]byte, isFinished *bool) (*XunfeiC
 		return nil, common.ErrorToOpenAIError(err)
 	}
 
-	error := errorHandle(&xunfeiChatResponse)
-	if error != nil {
-		return nil, error
+	aiError := errorHandle(&xunfeiChatResponse)
+	if aiError != nil {
+		return nil, aiError
 	}
 
 	if xunfeiChatResponse.Payload.Choices.Status == 2 {
@@ -256,7 +265,7 @@ func (h *xunfeiHandler) handlerStream(rawLine *[]byte, dataChan chan string, err
 		return
 	}
 
-	h.convertToOpenaiStream(xunfeiChatResponse, dataChan, errChan)
+	h.convertToOpenaiStream(xunfeiChatResponse, dataChan)
 
 	if isFinished {
 		errChan <- io.EOF
@@ -264,7 +273,7 @@ func (h *xunfeiHandler) handlerStream(rawLine *[]byte, dataChan chan string, err
 	}
 }
 
-func (h *xunfeiHandler) convertToOpenaiStream(xunfeiChatResponse *XunfeiChatResponse, dataChan chan string, errChan chan error) {
+func (h *xunfeiHandler) convertToOpenaiStream(xunfeiChatResponse *XunfeiChatResponse, dataChan chan string) {
 	if len(xunfeiChatResponse.Payload.Choices.Text) == 0 {
 		xunfeiChatResponse.Payload.Choices.Text = []XunfeiChatResponseTextItem{{}}
 	}
@@ -303,7 +312,7 @@ func (h *xunfeiHandler) convertToOpenaiStream(xunfeiChatResponse *XunfeiChatResp
 	chatCompletion := types.ChatCompletionStreamResponse{
 		ID:      xunfeiChatResponse.Header.Sid,
 		Object:  "chat.completion.chunk",
-		Created: common.GetTimestamp(),
+		Created: utils.GetTimestamp(),
 		Model:   h.Request.Model,
 	}
 

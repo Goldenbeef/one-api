@@ -3,21 +3,23 @@ package router
 import (
 	"embed"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"net/http"
-	"one-api/common"
-	"os"
+	"one-api/common/config"
+	"one-api/common/logger"
 	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 )
 
 func SetRouter(router *gin.Engine, buildFS embed.FS, indexPage []byte) {
 	SetApiRouter(router)
 	SetDashboardRouter(router)
 	SetRelayRouter(router)
-	frontendBaseUrl := os.Getenv("FRONTEND_BASE_URL")
-	if common.IsMasterNode && frontendBaseUrl != "" {
+	frontendBaseUrl := viper.GetString("frontend_base_url")
+	if config.IsMasterNode && frontendBaseUrl != "" {
 		frontendBaseUrl = ""
-		common.SysLog("FRONTEND_BASE_URL is ignored on master node")
+		logger.SysLog("FRONTEND_BASE_URL is ignored on master node")
 	}
 	if frontendBaseUrl == "" {
 		SetWebRouter(router, buildFS, indexPage)

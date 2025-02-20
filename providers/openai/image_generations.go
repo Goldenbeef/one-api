@@ -3,15 +3,16 @@ package openai
 import (
 	"net/http"
 	"one-api/common"
+	"one-api/common/config"
 	"one-api/types"
 )
 
 func (p *OpenAIProvider) CreateImageGenerations(request *types.ImageRequest) (*types.ImageResponse, *types.OpenAIErrorWithStatusCode) {
-	if !IsWithinRange(request.Model, request.N) {
+	if p.Channel.Type == config.ChannelTypeOpenAI && !IsWithinRange(request.Model, request.N) {
 		return nil, common.StringErrorWrapper("n_not_within_range", "n_not_within_range", http.StatusBadRequest)
 	}
 
-	req, errWithCode := p.GetRequestTextBody(common.RelayModeImagesGenerations, request.Model, request)
+	req, errWithCode := p.GetRequestTextBody(config.RelayModeImagesGenerations, request.Model, request)
 	if errWithCode != nil {
 		return nil, errWithCode
 	}
@@ -44,8 +45,8 @@ func IsWithinRange(element string, value int) bool {
 	if _, ok := common.DalleGenerationImageAmounts[element]; !ok {
 		return false
 	}
-	min := common.DalleGenerationImageAmounts[element][0]
-	max := common.DalleGenerationImageAmounts[element][1]
+	minCount := common.DalleGenerationImageAmounts[element][0]
+	maxCount := common.DalleGenerationImageAmounts[element][1]
 
-	return value >= min && value <= max
+	return value >= minCount && value <= maxCount
 }

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"one-api/common"
+	"one-api/common/config"
 	"one-api/types"
+	"strings"
 )
 
 var outputFormatMap = map[string]string{
@@ -30,8 +32,8 @@ func CreateSSML(text string, name string, role string) string {
 	return fmt.Sprintf(ssmlTemplate, roleAttribute, name, text)
 }
 
-func (p *AzureSpeechProvider) getRequestBody(request *types.SpeechAudioRequest) *bytes.Buffer {
-	voiceMap := map[string][]string{
+func (p *AzureSpeechProvider) GetVoiceMap() map[string][]string {
+	defaultVoiceMapping := map[string][]string{
 		"alloy":   {"zh-CN-YunxiNeural"},
 		"echo":    {"zh-CN-YunyangNeural"},
 		"fable":   {"zh-CN-YunxiNeural", "Boy"},
@@ -40,13 +42,40 @@ func (p *AzureSpeechProvider) getRequestBody(request *types.SpeechAudioRequest) 
 		"shimmer": {"zh-CN-XiaohanNeural"},
 	}
 
-	voice := ""
-	role := ""
+	if p.Channel.Plugin == nil {
+		return defaultVoiceMapping
+	}
+
+	customVoiceMapping, ok := p.Channel.Plugin.Data()["voice"]
+	if !ok {
+		return defaultVoiceMapping
+	}
+
+	for key, value := range customVoiceMapping {
+		if _, exists := defaultVoiceMapping[key]; !exists {
+			continue
+		}
+		customVoiceValue, isString := value.(string)
+		if !isString || customVoiceValue == "" {
+			continue
+		}
+		customizeVoice := strings.Split(customVoiceValue, "|")
+		defaultVoiceMapping[key] = customizeVoice
+	}
+
+	return defaultVoiceMapping
+}
+
+func (p *AzureSpeechProvider) getRequestBody(request *types.SpeechAudioRequest) *bytes.Buffer {
+	var voice, role string
+	voiceMap := p.GetVoiceMap()
 	if voiceMap[request.Voice] != nil {
 		voice = voiceMap[request.Voice][0]
 		if len(voiceMap[request.Voice]) > 1 {
 			role = voiceMap[request.Voice][1]
 		}
+	} else {
+		voice = request.Voice
 	}
 
 	ssml := CreateSSML(request.Input, voice, role)
@@ -56,11 +85,11 @@ func (p *AzureSpeechProvider) getRequestBody(request *types.SpeechAudioRequest) 
 }
 
 func (p *AzureSpeechProvider) CreateSpeech(request *types.SpeechAudioRequest) (*http.Response, *types.OpenAIErrorWithStatusCode) {
-	url, errWithCode := p.GetSupportedAPIUri(common.RelayModeAudioSpeech)
+	url, errWithCode := p.GetSupportedAPIUri(config.RelayModeAudioSpeech)
 	if errWithCode != nil {
 		return nil, errWithCode
 	}
-	fullRequestURL := p.GetFullRequestURL(url, request.Model)
+	fullRequestURL := p.GetFullRequestURL(url)
 	headers := p.GetRequestHeaders()
 	responseFormatr := outputFormatMap[request.ResponseFormat]
 	if responseFormatr == "" {

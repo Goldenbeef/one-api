@@ -2,6 +2,8 @@ package model
 
 import (
 	"one-api/common"
+	"one-api/common/config"
+	"one-api/common/logger"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +16,7 @@ type Option struct {
 
 func AllOption() ([]*Option, error) {
 	var options []*Option
-	var err error
-	err = DB.Find(&options).Error
+	err := DB.Find(&options).Error
 	return options, err
 }
 
@@ -25,79 +26,78 @@ func GetOption(key string) (option Option, err error) {
 }
 
 func InitOptionMap() {
-	common.OptionMapRWMutex.Lock()
-	common.OptionMap = make(map[string]string)
-	common.OptionMap["FileUploadPermission"] = strconv.Itoa(common.FileUploadPermission)
-	common.OptionMap["FileDownloadPermission"] = strconv.Itoa(common.FileDownloadPermission)
-	common.OptionMap["ImageUploadPermission"] = strconv.Itoa(common.ImageUploadPermission)
-	common.OptionMap["ImageDownloadPermission"] = strconv.Itoa(common.ImageDownloadPermission)
-	common.OptionMap["PasswordLoginEnabled"] = strconv.FormatBool(common.PasswordLoginEnabled)
-	common.OptionMap["PasswordRegisterEnabled"] = strconv.FormatBool(common.PasswordRegisterEnabled)
-	common.OptionMap["EmailVerificationEnabled"] = strconv.FormatBool(common.EmailVerificationEnabled)
-	common.OptionMap["GitHubOAuthEnabled"] = strconv.FormatBool(common.GitHubOAuthEnabled)
-	common.OptionMap["WeChatAuthEnabled"] = strconv.FormatBool(common.WeChatAuthEnabled)
-	common.OptionMap["TurnstileCheckEnabled"] = strconv.FormatBool(common.TurnstileCheckEnabled)
-	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
-	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
-	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
-	common.OptionMap["ApproximateTokenEnabled"] = strconv.FormatBool(common.ApproximateTokenEnabled)
-	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
-	common.OptionMap["DisplayInCurrencyEnabled"] = strconv.FormatBool(common.DisplayInCurrencyEnabled)
-	common.OptionMap["DisplayTokenStatEnabled"] = strconv.FormatBool(common.DisplayTokenStatEnabled)
-	common.OptionMap["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
-	common.OptionMap["EmailDomainRestrictionEnabled"] = strconv.FormatBool(common.EmailDomainRestrictionEnabled)
-	common.OptionMap["EmailDomainWhitelist"] = strings.Join(common.EmailDomainWhitelist, ",")
-	common.OptionMap["SMTPServer"] = ""
-	common.OptionMap["SMTPFrom"] = ""
-	common.OptionMap["SMTPPort"] = strconv.Itoa(common.SMTPPort)
-	common.OptionMap["SMTPAccount"] = ""
-	common.OptionMap["SMTPToken"] = ""
-	common.OptionMap["Notice"] = ""
-	common.OptionMap["About"] = ""
-	common.OptionMap["HomePageContent"] = ""
-	common.OptionMap["Footer"] = common.Footer
-	common.OptionMap["SystemName"] = common.SystemName
-	common.OptionMap["Logo"] = common.Logo
-	common.OptionMap["ServerAddress"] = ""
-	common.OptionMap["GitHubClientId"] = ""
-	common.OptionMap["GitHubClientSecret"] = ""
-	common.OptionMap["WeChatServerAddress"] = ""
-	common.OptionMap["WeChatServerToken"] = ""
-	common.OptionMap["WeChatAccountQRCodeImageURL"] = ""
-	common.OptionMap["TurnstileSiteKey"] = ""
-	common.OptionMap["TurnstileSecretKey"] = ""
-	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
-	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
-	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
-	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
-	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
-	common.OptionMap["ModelRatio"] = common.ModelRatio2JSONString()
-	common.OptionMap["GroupRatio"] = common.GroupRatio2JSONString()
-	common.OptionMap["TopUpLink"] = common.TopUpLink
-	common.OptionMap["ChatLink"] = common.ChatLink
-	common.OptionMap["QuotaPerUnit"] = strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64)
-	common.OptionMap["RetryTimes"] = strconv.Itoa(common.RetryTimes)
-	common.OptionMapRWMutex.Unlock()
-	initModelRatio()
+	config.OptionMapRWMutex.Lock()
+	config.OptionMap = make(map[string]string)
+	config.OptionMap["PasswordLoginEnabled"] = strconv.FormatBool(config.PasswordLoginEnabled)
+	config.OptionMap["PasswordRegisterEnabled"] = strconv.FormatBool(config.PasswordRegisterEnabled)
+	config.OptionMap["EmailVerificationEnabled"] = strconv.FormatBool(config.EmailVerificationEnabled)
+	config.OptionMap["GitHubOAuthEnabled"] = strconv.FormatBool(config.GitHubOAuthEnabled)
+	config.OptionMap["WeChatAuthEnabled"] = strconv.FormatBool(config.WeChatAuthEnabled)
+	config.OptionMap["LarkAuthEnabled"] = strconv.FormatBool(config.LarkAuthEnabled)
+	config.OptionMap["TurnstileCheckEnabled"] = strconv.FormatBool(config.TurnstileCheckEnabled)
+	config.OptionMap["RegisterEnabled"] = strconv.FormatBool(config.RegisterEnabled)
+	config.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(config.AutomaticDisableChannelEnabled)
+	config.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(config.AutomaticEnableChannelEnabled)
+	config.OptionMap["ApproximateTokenEnabled"] = strconv.FormatBool(config.ApproximateTokenEnabled)
+	config.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(config.LogConsumeEnabled)
+	config.OptionMap["DisplayInCurrencyEnabled"] = strconv.FormatBool(config.DisplayInCurrencyEnabled)
+	config.OptionMap["ChannelDisableThreshold"] = strconv.FormatFloat(config.ChannelDisableThreshold, 'f', -1, 64)
+	config.OptionMap["EmailDomainRestrictionEnabled"] = strconv.FormatBool(config.EmailDomainRestrictionEnabled)
+	config.OptionMap["EmailDomainWhitelist"] = strings.Join(config.EmailDomainWhitelist, ",")
+	config.OptionMap["SMTPServer"] = ""
+	config.OptionMap["SMTPFrom"] = ""
+	config.OptionMap["SMTPPort"] = strconv.Itoa(config.SMTPPort)
+	config.OptionMap["SMTPAccount"] = ""
+	config.OptionMap["SMTPToken"] = ""
+	config.OptionMap["Notice"] = ""
+	config.OptionMap["About"] = ""
+	config.OptionMap["HomePageContent"] = ""
+	config.OptionMap["Footer"] = config.Footer
+	config.OptionMap["SystemName"] = config.SystemName
+	config.OptionMap["Logo"] = config.Logo
+	config.OptionMap["ServerAddress"] = ""
+	config.OptionMap["GitHubClientId"] = ""
+
+	config.OptionMap["OIDCClientId"] = ""
+	config.OptionMap["OIDCClientSecret"] = ""
+	config.OptionMap["OIDCIssuer"] = ""
+	config.OptionMap["OIDCScopes"] = ""
+	config.OptionMap["OIDCUsernameClaims"] = ""
+
+	config.OptionMap["WeChatServerAddress"] = ""
+	config.OptionMap["WeChatServerToken"] = ""
+	config.OptionMap["WeChatAccountQRCodeImageURL"] = ""
+	config.OptionMap["TurnstileSiteKey"] = ""
+	config.OptionMap["TurnstileSecretKey"] = ""
+	config.OptionMap["QuotaForNewUser"] = strconv.Itoa(config.QuotaForNewUser)
+	config.OptionMap["QuotaForInviter"] = strconv.Itoa(config.QuotaForInviter)
+	config.OptionMap["QuotaForInvitee"] = strconv.Itoa(config.QuotaForInvitee)
+	config.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(config.QuotaRemindThreshold)
+	config.OptionMap["PreConsumedQuota"] = strconv.Itoa(config.PreConsumedQuota)
+	config.OptionMap["TopUpLink"] = config.TopUpLink
+	config.OptionMap["ChatLink"] = config.ChatLink
+	config.OptionMap["ChatLinks"] = config.ChatLinks
+	config.OptionMap["QuotaPerUnit"] = strconv.FormatFloat(config.QuotaPerUnit, 'f', -1, 64)
+	config.OptionMap["RetryTimes"] = strconv.Itoa(config.RetryTimes)
+	config.OptionMap["RetryCooldownSeconds"] = strconv.Itoa(config.RetryCooldownSeconds)
+
+	config.OptionMap["MjNotifyEnabled"] = strconv.FormatBool(config.MjNotifyEnabled)
+
+	config.OptionMap["ChatImageRequestProxy"] = ""
+
+	config.OptionMap["PaymentUSDRate"] = strconv.FormatFloat(config.PaymentUSDRate, 'f', -1, 64)
+	config.OptionMap["PaymentMinAmount"] = strconv.Itoa(config.PaymentMinAmount)
+	config.OptionMap["RechargeDiscount"] = common.RechargeDiscount2JSONString()
+
+	config.OptionMap["CFWorkerImageUrl"] = config.CFWorkerImageUrl
+	config.OptionMap["CFWorkerImageKey"] = config.CFWorkerImageKey
+	config.OptionMap["OldTokenMaxId"] = strconv.Itoa(config.OldTokenMaxId)
+	config.OptionMap["GitHubOldIdCloseEnabled"] = strconv.FormatBool(config.GitHubOldIdCloseEnabled)
+
+	config.OptionMap["AudioTokenJson"] = GetDefaultAudioRatio()
+
+	config.OptionMapRWMutex.Unlock()
 	loadOptionsFromDatabase()
-}
-
-func initModelRatio() {
-	// 查询数据库中的ModelRatio
-	option, err := GetOption("ModelRatio")
-	if err != nil || option.Value == "" {
-		return
-	}
-
-	newModelRatio, err := common.MergeModelRatioByJSONString(option.Value)
-	if err != nil || newModelRatio == "" {
-		return
-	}
-
-	// 更新数据库中的ModelRatio
-	common.SysLog("update ModelRatio")
-	UpdateOption("ModelRatio", newModelRatio)
-
 }
 
 func loadOptionsFromDatabase() {
@@ -105,7 +105,7 @@ func loadOptionsFromDatabase() {
 	for _, option := range options {
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
-			common.SysError("failed to update option map: " + err.Error())
+			logger.SysError("failed to update option map: " + err.Error())
 		}
 	}
 }
@@ -113,7 +113,7 @@ func loadOptionsFromDatabase() {
 func SyncOptions(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Second)
-		common.SysLog("syncing options from database")
+		logger.SysLog("syncing options from database")
 		loadOptionsFromDatabase()
 	}
 }
@@ -134,116 +134,106 @@ func UpdateOption(key string, value string) error {
 	return updateOptionMap(key, value)
 }
 
+var optionIntMap = map[string]*int{
+	"SMTPPort":             &config.SMTPPort,
+	"QuotaForNewUser":      &config.QuotaForNewUser,
+	"QuotaForInviter":      &config.QuotaForInviter,
+	"QuotaForInvitee":      &config.QuotaForInvitee,
+	"QuotaRemindThreshold": &config.QuotaRemindThreshold,
+	"PreConsumedQuota":     &config.PreConsumedQuota,
+	"RetryTimes":           &config.RetryTimes,
+	"RetryCooldownSeconds": &config.RetryCooldownSeconds,
+	"PaymentMinAmount":     &config.PaymentMinAmount,
+	"OldTokenMaxId":        &config.OldTokenMaxId,
+}
+
+var optionBoolMap = map[string]*bool{
+	"PasswordRegisterEnabled":        &config.PasswordRegisterEnabled,
+	"PasswordLoginEnabled":           &config.PasswordLoginEnabled,
+	"EmailVerificationEnabled":       &config.EmailVerificationEnabled,
+	"GitHubOAuthEnabled":             &config.GitHubOAuthEnabled,
+	"OIDCAuthEnabled":                &config.OIDCAuthEnabled,
+	"WeChatAuthEnabled":              &config.WeChatAuthEnabled,
+	"LarkAuthEnabled":                &config.LarkAuthEnabled,
+	"TurnstileCheckEnabled":          &config.TurnstileCheckEnabled,
+	"RegisterEnabled":                &config.RegisterEnabled,
+	"EmailDomainRestrictionEnabled":  &config.EmailDomainRestrictionEnabled,
+	"AutomaticDisableChannelEnabled": &config.AutomaticDisableChannelEnabled,
+	"AutomaticEnableChannelEnabled":  &config.AutomaticEnableChannelEnabled,
+	"ApproximateTokenEnabled":        &config.ApproximateTokenEnabled,
+	"LogConsumeEnabled":              &config.LogConsumeEnabled,
+	"DisplayInCurrencyEnabled":       &config.DisplayInCurrencyEnabled,
+	"MjNotifyEnabled":                &config.MjNotifyEnabled,
+	"GitHubOldIdCloseEnabled":        &config.GitHubOldIdCloseEnabled,
+}
+
+var optionStringMap = map[string]*string{
+	"SMTPServer":                  &config.SMTPServer,
+	"SMTPAccount":                 &config.SMTPAccount,
+	"SMTPFrom":                    &config.SMTPFrom,
+	"SMTPToken":                   &config.SMTPToken,
+	"ServerAddress":               &config.ServerAddress,
+	"GitHubClientId":              &config.GitHubClientId,
+	"GitHubClientSecret":          &config.GitHubClientSecret,
+	"OIDCClientId":                &config.OIDCClientId,
+	"OIDCClientSecret":            &config.OIDCClientSecret,
+	"OIDCIssuer":                  &config.OIDCIssuer,
+	"OIDCScopes":                  &config.OIDCScopes,
+	"OIDCUsernameClaims":          &config.OIDCUsernameClaims,
+	"Footer":                      &config.Footer,
+	"SystemName":                  &config.SystemName,
+	"Logo":                        &config.Logo,
+	"WeChatServerAddress":         &config.WeChatServerAddress,
+	"WeChatServerToken":           &config.WeChatServerToken,
+	"WeChatAccountQRCodeImageURL": &config.WeChatAccountQRCodeImageURL,
+	"TurnstileSiteKey":            &config.TurnstileSiteKey,
+	"TurnstileSecretKey":          &config.TurnstileSecretKey,
+	"TopUpLink":                   &config.TopUpLink,
+	"ChatLink":                    &config.ChatLink,
+	"ChatLinks":                   &config.ChatLinks,
+	"LarkClientId":                &config.LarkClientId,
+	"LarkClientSecret":            &config.LarkClientSecret,
+	"ChatImageRequestProxy":       &config.ChatImageRequestProxy,
+	"CFWorkerImageUrl":            &config.CFWorkerImageUrl,
+	"CFWorkerImageKey":            &config.CFWorkerImageKey,
+}
+
 func updateOptionMap(key string, value string) (err error) {
-	common.OptionMapRWMutex.Lock()
-	defer common.OptionMapRWMutex.Unlock()
-	common.OptionMap[key] = value
-	if strings.HasSuffix(key, "Permission") {
-		intValue, _ := strconv.Atoi(value)
-		switch key {
-		case "FileUploadPermission":
-			common.FileUploadPermission = intValue
-		case "FileDownloadPermission":
-			common.FileDownloadPermission = intValue
-		case "ImageUploadPermission":
-			common.ImageUploadPermission = intValue
-		case "ImageDownloadPermission":
-			common.ImageDownloadPermission = intValue
-		}
+	config.OptionMapRWMutex.Lock()
+	defer config.OptionMapRWMutex.Unlock()
+	config.OptionMap[key] = value
+	if ptr, ok := optionIntMap[key]; ok {
+		*ptr, _ = strconv.Atoi(value)
+		return
 	}
-	if strings.HasSuffix(key, "Enabled") {
-		boolValue := value == "true"
-		switch key {
-		case "PasswordRegisterEnabled":
-			common.PasswordRegisterEnabled = boolValue
-		case "PasswordLoginEnabled":
-			common.PasswordLoginEnabled = boolValue
-		case "EmailVerificationEnabled":
-			common.EmailVerificationEnabled = boolValue
-		case "GitHubOAuthEnabled":
-			common.GitHubOAuthEnabled = boolValue
-		case "WeChatAuthEnabled":
-			common.WeChatAuthEnabled = boolValue
-		case "TurnstileCheckEnabled":
-			common.TurnstileCheckEnabled = boolValue
-		case "RegisterEnabled":
-			common.RegisterEnabled = boolValue
-		case "EmailDomainRestrictionEnabled":
-			common.EmailDomainRestrictionEnabled = boolValue
-		case "AutomaticDisableChannelEnabled":
-			common.AutomaticDisableChannelEnabled = boolValue
-		case "AutomaticEnableChannelEnabled":
-			common.AutomaticEnableChannelEnabled = boolValue
-		case "ApproximateTokenEnabled":
-			common.ApproximateTokenEnabled = boolValue
-		case "LogConsumeEnabled":
-			common.LogConsumeEnabled = boolValue
-		case "DisplayInCurrencyEnabled":
-			common.DisplayInCurrencyEnabled = boolValue
-		case "DisplayTokenStatEnabled":
-			common.DisplayTokenStatEnabled = boolValue
-		}
+
+	if ptr, ok := optionBoolMap[key]; ok {
+		*ptr = value == "true"
+		return
 	}
+
+	if ptr, ok := optionStringMap[key]; ok {
+		*ptr = value
+		return
+	}
+
 	switch key {
 	case "EmailDomainWhitelist":
-		common.EmailDomainWhitelist = strings.Split(value, ",")
-	case "SMTPServer":
-		common.SMTPServer = value
-	case "SMTPPort":
-		intValue, _ := strconv.Atoi(value)
-		common.SMTPPort = intValue
-	case "SMTPAccount":
-		common.SMTPAccount = value
-	case "SMTPFrom":
-		common.SMTPFrom = value
-	case "SMTPToken":
-		common.SMTPToken = value
-	case "ServerAddress":
-		common.ServerAddress = value
-	case "GitHubClientId":
-		common.GitHubClientId = value
-	case "GitHubClientSecret":
-		common.GitHubClientSecret = value
-	case "Footer":
-		common.Footer = value
-	case "SystemName":
-		common.SystemName = value
-	case "Logo":
-		common.Logo = value
-	case "WeChatServerAddress":
-		common.WeChatServerAddress = value
-	case "WeChatServerToken":
-		common.WeChatServerToken = value
-	case "WeChatAccountQRCodeImageURL":
-		common.WeChatAccountQRCodeImageURL = value
-	case "TurnstileSiteKey":
-		common.TurnstileSiteKey = value
-	case "TurnstileSecretKey":
-		common.TurnstileSecretKey = value
-	case "QuotaForNewUser":
-		common.QuotaForNewUser, _ = strconv.Atoi(value)
-	case "QuotaForInviter":
-		common.QuotaForInviter, _ = strconv.Atoi(value)
-	case "QuotaForInvitee":
-		common.QuotaForInvitee, _ = strconv.Atoi(value)
-	case "QuotaRemindThreshold":
-		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
-	case "PreConsumedQuota":
-		common.PreConsumedQuota, _ = strconv.Atoi(value)
-	case "RetryTimes":
-		common.RetryTimes, _ = strconv.Atoi(value)
-	case "ModelRatio":
-		err = common.UpdateModelRatioByJSONString(value)
-	case "GroupRatio":
-		err = common.UpdateGroupRatioByJSONString(value)
-	case "TopUpLink":
-		common.TopUpLink = value
-	case "ChatLink":
-		common.ChatLink = value
+		config.EmailDomainWhitelist = strings.Split(value, ",")
 	case "ChannelDisableThreshold":
-		common.ChannelDisableThreshold, _ = strconv.ParseFloat(value, 64)
+		config.ChannelDisableThreshold, _ = strconv.ParseFloat(value, 64)
 	case "QuotaPerUnit":
-		common.QuotaPerUnit, _ = strconv.ParseFloat(value, 64)
+		config.QuotaPerUnit, _ = strconv.ParseFloat(value, 64)
+	case "PaymentUSDRate":
+		config.PaymentUSDRate, _ = strconv.ParseFloat(value, 64)
+	case "RechargeDiscount":
+		err = common.UpdateRechargeDiscountByJSONString(value)
+		config.RechargeDiscount = common.RechargeDiscount2JSONString()
+	case "AudioTokenJson":
+		config.AudioTokenJson = value
+		if PricingInstance != nil {
+			PricingInstance.Init()
+		}
 	}
 	return err
 }

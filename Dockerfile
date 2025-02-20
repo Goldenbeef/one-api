@@ -1,13 +1,17 @@
-FROM node:16 as builder
+FROM node:18 as builder
 
 WORKDIR /build
+
 COPY web/package.json .
-RUN npm install
+COPY web/yarn.lock .
+
+RUN yarn --frozen-lockfile
+
 COPY ./web .
 COPY ./VERSION .
-RUN DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat VERSION) npm run build
+RUN DISABLE_ESLINT_PLUGIN='true' VITE_APP_VERSION=$(cat VERSION) npm run build
 
-FROM golang AS builder2
+FROM golang:1.22 AS builder2
 
 ENV GO111MODULE=on \
     CGO_ENABLED=1 \

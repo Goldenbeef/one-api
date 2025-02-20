@@ -4,66 +4,91 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"one-api/common/config"
+	"one-api/common/logger"
 	"strings"
 
 	"one-api/common/image"
 	"one-api/types"
 
 	"github.com/pkoukk/tiktoken-go"
+	"github.com/spf13/viper"
 )
 
 var tokenEncoderMap = map[string]*tiktoken.Tiktoken{}
-var defaultTokenEncoder *tiktoken.Tiktoken
+var gpt35TokenEncoder *tiktoken.Tiktoken
+var gpt4TokenEncoder *tiktoken.Tiktoken
+var gpt4oTokenEncoder *tiktoken.Tiktoken
 
 func InitTokenEncoders() {
-	SysLog("initializing token encoders")
-	gpt35TokenEncoder, err := tiktoken.EncodingForModel("gpt-3.5-turbo")
+	if viper.GetBool("disable_token_encoders") {
+		config.DisableTokenEncoders = true
+		logger.SysLog("token encoders disabled")
+		return
+	}
+	logger.SysLog("initializing token encoders")
+	var err error
+	gpt35TokenEncoder, err = tiktoken.EncodingForModel("gpt-3.5-turbo")
 	if err != nil {
-		FatalLog(fmt.Sprintf("failed to get gpt-3.5-turbo token encoder: %s", err.Error()))
+		logger.FatalLog(fmt.Sprintf("failed to get gpt-3.5-turbo token encoder: %s", err.Error()))
 	}
-	defaultTokenEncoder = gpt35TokenEncoder
-	gpt4TokenEncoder, err := tiktoken.EncodingForModel("gpt-4")
+
+	gpt4TokenEncoder, err = tiktoken.EncodingForModel("gpt-4")
 	if err != nil {
-		FatalLog(fmt.Sprintf("failed to get gpt-4 token encoder: %s", err.Error()))
+		logger.FatalLog(fmt.Sprintf("failed to get gpt-4 token encoder: %s", err.Error()))
 	}
-	for model, _ := range ModelRatio {
-		if strings.HasPrefix(model, "gpt-3.5") {
-			tokenEncoderMap[model] = gpt35TokenEncoder
-		} else if strings.HasPrefix(model, "gpt-4") {
-			tokenEncoderMap[model] = gpt4TokenEncoder
-		} else {
-			tokenEncoderMap[model] = nil
-		}
+
+	gpt4oTokenEncoder, err = tiktoken.EncodingForModel("gpt-4o")
+	if err != nil {
+		logger.FatalLog(fmt.Sprintf("failed to get gpt-4o token encoder: %s", err.Error()))
 	}
-	SysLog("token encoders initialized")
+
+	logger.SysLog("token encoders initialized")
 }
 
-func getTokenEncoder(model string) *tiktoken.Tiktoken {
+func GetTokenEncoder(model string) *tiktoken.Tiktoken {
+	if config.DisableTokenEncoders {
+		return nil
+	}
+
 	tokenEncoder, ok := tokenEncoderMap[model]
-	if ok && tokenEncoder != nil {
-		return tokenEncoder
-	}
 	if ok {
-		tokenEncoder, err := tiktoken.EncodingForModel(model)
-		if err != nil {
-			SysError(fmt.Sprintf("failed to get token encoder for model %s: %s, using encoder for gpt-3.5-turbo", model, err.Error()))
-			tokenEncoder = defaultTokenEncoder
-		}
-		tokenEncoderMap[model] = tokenEncoder
 		return tokenEncoder
 	}
-	return defaultTokenEncoder
+
+	if strings.HasPrefix(model, "gpt-3.5") {
+		tokenEncoder = gpt35TokenEncoder
+	} else if strings.HasPrefix(model, "gpt-4o") {
+		tokenEncoder = gpt4oTokenEncoder
+	} else if strings.HasPrefix(model, "gpt-4") {
+		tokenEncoder = gpt4TokenEncoder
+	} else {
+		var err error
+		tokenEncoder, err = tiktoken.EncodingForModel(model)
+		if err != nil {
+			logger.SysError(fmt.Sprintf("failed to get token encoder for model %s: %s, using encoder for gpt-3.5-turbo", model, err.Error()))
+			tokenEncoder = gpt35TokenEncoder
+		}
+	}
+
+	tokenEncoderMap[model] = tokenEncoder
+	return tokenEncoder
 }
 
-func getTokenNum(tokenEncoder *tiktoken.Tiktoken, text string) int {
-	if ApproximateTokenEnabled {
+func GetTokenNum(tokenEncoder *tiktoken.Tiktoken, text string) int {
+	if config.DisableTokenEncoders || config.ApproximateTokenEnabled {
 		return int(float64(len(text)) * 0.38)
 	}
 	return len(tokenEncoder.Encode(text, nil, nil))
 }
 
-func CountTokenMessages(messages []types.ChatCompletionMessage, model string) int {
-	tokenEncoder := getTokenEncoder(model)
+func CountTokenMessages(messages []types.ChatCompletionMessage, model string, preCostType int) int {
+
+	if preCostType == config.PreContNotAll {
+		return 0
+	}
+
+	tokenEncoder := GetTokenEncoder(model)
 	// Reference:
 	// https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb
 	// https://github.com/pkoukk/tiktoken-go/issues/6
@@ -83,53 +108,112 @@ func CountTokenMessages(messages []types.ChatCompletionMessage, model string) in
 		tokenNum += tokensPerMessage
 		switch v := message.Content.(type) {
 		case string:
-			tokenNum += getTokenNum(tokenEncoder, v)
+			tokenNum += GetTokenNum(tokenEncoder, v)
 		case []any:
 			for _, it := range v {
 				m := it.(map[string]any)
 				switch m["type"] {
 				case "text":
-					tokenNum += getTokenNum(tokenEncoder, m["text"].(string))
+					tokenNum += GetTokenNum(tokenEncoder, m["text"].(string))
 				case "image_url":
+					if preCostType == config.PreCostNotImage {
+						continue
+					}
 					imageUrl, ok := m["image_url"].(map[string]any)
-					if ok {
-						url := imageUrl["url"].(string)
-						detail := ""
-						if imageUrl["detail"] != nil {
-							detail = imageUrl["detail"].(string)
-						}
-						imageTokens, err := countImageTokens(url, detail)
-						if err != nil {
-							SysError("error counting image tokens: " + err.Error())
-						} else {
-							tokenNum += imageTokens
-						}
+					if !ok {
+						continue
+					}
+					url := imageUrl["url"].(string)
+					detail := ""
+					if imageUrl["detail"] != nil {
+						detail = imageUrl["detail"].(string)
+					}
+					countImageTokens := getCountImageFun(model)
+					imageTokens, err := countImageTokens(url, detail, model)
+					if err != nil {
+						//Due to the excessive length of the error information, only extract and record the most critical part.
+						logger.SysError("error counting image tokens: " + err.Error())
+					} else {
+						tokenNum += imageTokens
 					}
 				}
 			}
 		}
-		tokenNum += getTokenNum(tokenEncoder, message.StringContent())
-		tokenNum += getTokenNum(tokenEncoder, message.Role)
+		tokenNum += GetTokenNum(tokenEncoder, message.Role)
 		if message.Name != nil {
 			tokenNum += tokensPerName
-			tokenNum += getTokenNum(tokenEncoder, *message.Name)
+			tokenNum += GetTokenNum(tokenEncoder, *message.Name)
 		}
 	}
 	tokenNum += 3 // Every reply is primed with <|start|>assistant<|message|>
 	return tokenNum
 }
 
-const (
-	lowDetailCost         = 85
-	highDetailCostPerTile = 170
-	additionalCost        = 85
-)
+func CountTokenRerankMessages(messages types.RerankRequest, model string, preCostType int) int {
+	if preCostType == config.PreContNotAll {
+		return 0
+	}
+
+	tokenEncoder := GetTokenEncoder(model)
+	tokenNum := 0
+
+	tokenNum += GetTokenNum(tokenEncoder, messages.Query)
+
+	for _, document := range messages.Documents {
+		tokenNum += GetTokenNum(tokenEncoder, document)
+	}
+
+	return tokenNum
+}
+
+func getCountImageFun(model string) CountImageFun {
+	for prefix, fun := range CountImageFunMap {
+		if strings.HasPrefix(model, prefix) {
+			return fun
+		}
+	}
+	return CountImageFunMap["gpt-"]
+}
+
+type CountImageFun func(url, detail, modelName string) (int, error)
+
+var CountImageFunMap = map[string]CountImageFun{
+	"gpt-":    countOpenaiImageTokens,
+	"gemini-": countGeminiImageTokens,
+	"claude-": countClaudeImageTokens,
+	"glm-":    countGlmImageTokens,
+}
+
+type OpenAIImageCost struct {
+	Low        int
+	High       int
+	Additional int
+}
+
+var OpenAIImageCostMap = map[string]*OpenAIImageCost{
+	"general": {
+		Low:        85,
+		High:       170,
+		Additional: 85,
+	},
+	"gpt-4o-mini": {
+		Low:        2833,
+		High:       5667,
+		Additional: 2833,
+	},
+}
 
 // https://platform.openai.com/docs/guides/vision/calculating-costs
 // https://github.com/openai/openai-cookbook/blob/05e3f9be4c7a2ae7ecf029a7c32065b024730ebe/examples/How_to_count_tokens_with_tiktoken.ipynb
-func countImageTokens(url string, detail string) (_ int, err error) {
-	var fetchSize = true
+func countOpenaiImageTokens(url, detail, modelName string) (_ int, err error) {
+	// var fetchSize = true
 	var width, height int
+	var openAIImageCost *OpenAIImageCost
+	if strings.HasPrefix(modelName, "gpt-4o-mini") {
+		openAIImageCost = OpenAIImageCostMap["gpt-4o-mini"]
+	} else {
+		openAIImageCost = OpenAIImageCostMap["general"]
+	}
 	// Reference: https://platform.openai.com/docs/guides/vision/low-or-high-fidelity-image-understanding
 	// detail == "auto" is undocumented on how it works, it just said the model will use the auto setting which will look at the image input size and decide if it should use the low or high setting.
 	// According to the official guide, "low" disable the high-res model,
@@ -161,13 +245,11 @@ func countImageTokens(url string, detail string) (_ int, err error) {
 	}
 	switch detail {
 	case "low":
-		return lowDetailCost, nil
+		return openAIImageCost.Low, nil
 	case "high":
-		if fetchSize {
-			width, height, err = image.GetImageSize(url)
-			if err != nil {
-				return 0, err
-			}
+		width, height, err = image.GetImageSize(url)
+		if err != nil {
+			return 0, err
 		}
 		if width > 2048 || height > 2048 { // max(width, height) > 2048
 			ratio := float64(2048) / math.Max(float64(width), float64(height))
@@ -180,11 +262,28 @@ func countImageTokens(url string, detail string) (_ int, err error) {
 			height = int(float64(height) * ratio)
 		}
 		numSquares := int(math.Ceil(float64(width)/512) * math.Ceil(float64(height)/512))
-		result := numSquares*highDetailCostPerTile + additionalCost
+		result := numSquares*openAIImageCost.High + openAIImageCost.Additional
 		return result, nil
 	default:
 		return 0, errors.New("invalid detail option")
 	}
+}
+
+func countGeminiImageTokens(_, _, _ string) (int, error) {
+	return 258, nil
+}
+
+func countClaudeImageTokens(url, _, _ string) (int, error) {
+	width, height, err := image.GetImageSize(url)
+	if err != nil {
+		return 0, err
+	}
+
+	return int(math.Ceil(float64(width*height) / 750)), nil
+}
+
+func countGlmImageTokens(_, _, _ string) (int, error) {
+	return 1047, nil
 }
 
 func CountTokenInput(input any, model string) int {
@@ -198,41 +297,52 @@ func CountTokenInput(input any, model string) int {
 		}
 		return CountTokenText(text, model)
 	}
-	return 0
+	return CountTokenInput(fmt.Sprintf("%v", input), model)
 }
 
 func CountTokenText(text string, model string) int {
-	tokenEncoder := getTokenEncoder(model)
-	return getTokenNum(tokenEncoder, text)
+	tokenEncoder := GetTokenEncoder(model)
+	return GetTokenNum(tokenEncoder, text)
 }
 
 func CountTokenImage(input interface{}) (int, error) {
 	switch v := input.(type) {
 	case types.ImageRequest:
 		// 处理 ImageRequest
-		return calculateToken(v.Model, v.Size, v.N, v.Quality)
+		return calculateToken(v.Model, v.Size, v.N, v.Quality, v.Style)
 	case types.ImageEditRequest:
 		// 处理 ImageEditsRequest
-		return calculateToken(v.Model, v.Size, v.N, "")
+		return calculateToken(v.Model, v.Size, v.N, "", "")
 	default:
 		return 0, errors.New("unsupported type")
 	}
 }
 
-func calculateToken(model string, size string, n int, quality string) (int, error) {
-	imageCostRatio, hasValidSize := DalleSizeRatios[model][size]
+func calculateToken(model string, size string, n int, quality, style string) (int, error) {
 
-	if hasValidSize {
-		if quality == "hd" && model == "dall-e-3" {
-			if size == "1024x1024" {
-				imageCostRatio *= 2
-			} else {
-				imageCostRatio *= 1.5
-			}
+	imageCostRatio := 1.0
+	hasValidSize := false
+
+	switch model {
+	case "recraft20b", "recraftv3":
+		if style == "vector_illustration" {
+			imageCostRatio = 2
 		}
-	} else {
-		imageCostRatio = 1
-		// return 0, errors.New("size not supported for this image model")
+
+	default:
+		imageCostRatio, hasValidSize = DalleSizeRatios[model][size]
+
+		if hasValidSize {
+			if quality == "hd" && model == "dall-e-3" {
+				if size == "1024x1024" {
+					imageCostRatio *= 2
+				} else {
+					imageCostRatio *= 1.5
+				}
+			}
+		} else {
+			imageCostRatio = 1
+		}
 	}
 
 	return int(imageCostRatio*1000) * n, nil
